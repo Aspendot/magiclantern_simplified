@@ -68,27 +68,48 @@ static struct patch sd_200d_192_patch[] = {
 /* Canon table does not expose >192MHz, reuse the 192MHz table for the "240" option */
 static struct patch *sd_200d_192_reuse_patch = sd_200d_192_patch;
 
-static void apply_200d_speed_profile(void)
+static void apply_200d_speed_profile(int target_mode)
 {
     extern void autotune_SD(void);
 
-    if (sd_overclock == 1)
+    /* OFF */
+    if (target_mode <= 0)
+    {
+        return;
+    }
+
+    /* "160" entry maps to Canon's 156MHz */
+    if (target_mode == 1)
     {
         apply_patches(sd_200d_156_patch, COUNT(sd_200d_156_patch));
     }
 
-    if (sd_overclock == 2)
+    /* "192" entry maps to Canon's 192MHz */
+    if (target_mode == 2)
     {
         apply_patches(sd_200d_192_patch, COUNT(sd_200d_192_patch));
     }
 
-    if (sd_overclock == 3)
+    /* "240" reuses the 192MHz entry (highest available) */
+    if (target_mode == 3)
     {
         apply_patches(sd_200d_192_reuse_patch, COUNT(sd_200d_192_patch));
     }
 
     /* Run Canon's autotune after we modify the table */
     autotune_SD();
+}
+
+static void apply_200d_speed_profile_now(void *priv_unused, int delta_unused)
+{
+    if (sd_overclock <= 0)
+    {
+        NotifyBox(2000, "SD OC: OFF");
+        return;
+    }
+
+    NotifyBox(2000, "SD OC: applying %s", (sd_overclock == 1) ? "156" : "192");
+    apply_200d_speed_profile(sd_overclock);
 }
 #endif
 
@@ -648,6 +669,14 @@ static struct menu_entry sd_uhs_menu[] =
                 .name = "SD Frequency",
                 .choices = CHOICES("OFF", "160MHz", "192MHz", "240MHz"),
             },
+#ifdef CONFIG_200D
+            {
+                .name = "Apply (Canon autotune)",
+                .select = apply_200d_speed_profile_now,
+                .help = "Apply the selected preset now (no reboot). Uses Canon autotune sequence.",
+                .icon_type = IT_ACTION,
+            },
+#endif
             {
                 .name = "Access Mode",
                 .priv = &access_mode,
@@ -747,6 +776,7 @@ static unsigned int sd_uhs_init()
                                                    "240MHz reuses the 192MHz table entry (highest available).\n";
         sd_uhs_menu[0].choices = sd_choices_200d;
         sd_uhs_menu[0].help2 = sd_choices_help2_200d;
+        sd_uhs_menu[0].help = "Choose an option; use Apply to run now (no reboot).";
     }
 #endif
 
@@ -934,7 +964,7 @@ static unsigned int sd_uhs_init()
         /* 200D uses Canon's autotune_SD() routine; patch its speed table */
         if (sd_overclock)
         {
-            apply_200d_speed_profile();
+            apply_200d_speed_profile(sd_overclock);
             turned_on = 1;
         }
     }
