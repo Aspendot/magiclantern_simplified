@@ -358,7 +358,8 @@ static int check_jump_range(uint32_t pc, uint32_t dest)
     return 1;
 }
 
-int patch_hook_function(uintptr_t addr, uint32_t orig_instr,
+/* Mark used so it isn't dropped by --gc-sections; modules depend on this symbol. */
+int __attribute__((used)) patch_hook_function(uintptr_t addr, uint32_t orig_instr,
                         patch_hook_function_cbr hook_function, const char *description)
 {
     int err = 0;

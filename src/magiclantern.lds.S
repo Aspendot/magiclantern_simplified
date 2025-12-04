@@ -104,6 +104,10 @@ SECTIONS
         *(.module_symbols)
         _module_symbols_end = .;
 
+        /* Exported symbols we must keep even if unreferenced */
+        . = ALIGN(8);
+        KEEP(*(.exported_symbols))
+
         /* Read/write data */
         . = ALIGN(64);
         *(.data)

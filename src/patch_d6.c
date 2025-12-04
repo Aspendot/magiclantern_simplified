@@ -154,4 +154,21 @@ end:
     return err;
 }
 
+/* On DIGIC 6/7 we don't have patch_hook_function; provide a stub so modules that
+ * reference it can still link and detect lack of support at runtime. */
+__attribute__((used))
+int patch_hook_function(uintptr_t addr, uint32_t orig_instr,
+                        patch_hook_function_cbr hook_function, const char *description)
+{
+    (void)addr;
+    (void)orig_instr;
+    (void)hook_function;
+    (void)description;
+    return -1; /* not supported on D6/D7 */
+}
+
+/* Keep the symbol exported for modules even if unreferenced in core. */
+__attribute__((used, section(".exported_symbols")))
+static void *export_patch_hook_function = (void *)patch_hook_function;
+
 #endif // CONFIG_DIGIC_VI

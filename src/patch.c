@@ -525,3 +525,21 @@ static void patch_simple_init()
 INIT_FUNC("patch", patch_simple_init);
 
 #endif // defined(CONFIG_MMU_REMAP) || defined(CONFIG_DIGIC_45) || defined(CONFIG_DIGIC_VI)
+
+#if !defined(CONFIG_DIGIC_45)
+/* DIGIC 6/7+ builds don't implement patch_hook_function; export a stub so
+ * modules can link and detect lack of support gracefully. */
+__attribute__((used))
+int patch_hook_function(uintptr_t addr, uint32_t orig_instr,
+                        patch_hook_function_cbr hook_function, const char *description)
+{
+    (void)addr;
+    (void)orig_instr;
+    (void)hook_function;
+    (void)description;
+    return -1;
+}
+
+__attribute__((used, section(".exported_symbols")))
+static void *export_patch_hook_function = (void *)patch_hook_function;
+#endif
