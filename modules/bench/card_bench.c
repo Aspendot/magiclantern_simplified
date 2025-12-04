@@ -52,13 +52,23 @@ static void card_benchmark_wr(uint32_t bufsize, int K, int N, int test_length)
     msleep(2000);
 
     void *buf = fio_malloc(bufsize);
+    uint32_t alloc_size = bufsize;
+
+    /* In movie mode we may not have 16MB contiguous; try smaller buffers. */
+    while (!buf && alloc_size > 128 * 1024)
+    {
+        alloc_size /= 2;
+        buf = fio_malloc(alloc_size);
+    }
+
     if (buf)
     {
         FILE *f = FIO_OpenFile(CARD_BENCHMARK_FILE, O_RDONLY | O_SYNC);
         // The write run above may not finish the full size in the time limit.
         // Ensure we don't try to read more than exists.
         FIO_GetFileSize(CARD_BENCHMARK_FILE, &filesize);
-        max_loops = filesize / bufsize; // full filesize only written if max_loops hit
+        bufsize = alloc_size;               /* use the actual allocated size */
+        max_loops = filesize / bufsize;     // full filesize only written if max_loops hit
         int t0 = get_ms_clock();
         uint32_t n;
         uint32_t times = 0;
