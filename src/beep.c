@@ -110,6 +110,12 @@ static void normalize_audio(int16_t* buf, int N)
     int m = 0;
     for (int i = 0; i < N/2; i++)
         m = MAX(m, ABS(buf[i]));
+
+    if (m == 0)
+    {
+        /* avoid divide-by-zero on silent buffers */
+        return;
+    }
     
     for (int i = 0; i < N/2; i++)
         buf[i] = (int)buf[i] * 32767 / m;
@@ -150,9 +156,24 @@ static void wav_set_size(uint8_t* header, int size)
 static int wav_find_chunk(uint8_t* buf, int size, uint32_t chunk_code)
 {
     int offset = 12; // start after RIFFnnnnWAVE
-    while (offset < size && *(uint32_t*)(buf + offset) != chunk_code)
-        offset += *(uint32_t*)(buf + offset + 4) + 8;
-    if (*(uint32_t*)(buf + offset) != chunk_code) 
+    while (offset + 8 <= size)
+    {
+        uint32_t chunk = *(uint32_t*)(buf + offset);
+        if (chunk == chunk_code)
+        {
+            return offset;
+        }
+
+        uint32_t chunk_size = *(uint32_t*)(buf + offset + 4);
+        if (offset + 8 + chunk_size > size)
+        {
+            break; /* malformed chunk length */
+        }
+
+        offset += chunk_size + 8;
+    }
+
+    if (offset + 8 > size || *(uint32_t*)(buf + offset) != chunk_code) 
     { 
         NotifyBox(5000, "WAV: subchunk not found");
         return 0;
@@ -326,6 +347,10 @@ static void wav_recordsmall(char* filename, int duration, int show_progress)
     {
         FIO_WriteFile(f, UNCACHEABLE(wav_buf), sizeof(wav_header) + N);
         FIO_CloseFile(f);
+        fio_free(wav_buf);
+    }
+    else
+    {
         fio_free(wav_buf);
     }
 }
@@ -1166,4 +1191,3 @@ void WAV_StopRecord(){};
 void beep_custom(int duration, int frequency, int wait) {}
 
 #endif
-
