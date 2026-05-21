@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,11 +16,12 @@ from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 SERVICE_VERSION = "0.1.0"
 ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets" / "weapons"
 
-MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "1700"))
+MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "1200"))
 MATCH_MIN_SCORE = float(os.getenv("MATCH_MIN_SCORE", "0.50"))
-ACCEPT_AVG_SCORE = float(os.getenv("ACCEPT_AVG_SCORE", "0.62"))
-ACCEPT_MIN_SCORE = float(os.getenv("ACCEPT_MIN_SCORE", "0.54"))
+ACCEPT_AVG_SCORE = float(os.getenv("ACCEPT_AVG_SCORE", "0.985"))
+ACCEPT_MIN_SCORE = float(os.getenv("ACCEPT_MIN_SCORE", "0.975"))
 RANDOM_GREEN_MIN_GROUP = int(os.getenv("RANDOM_GREEN_MIN_GROUP", "4"))
+DETECT_TIME_BUDGET_SECONDS = float(os.getenv("DETECT_TIME_BUDGET_SECONDS", "18"))
 
 
 @dataclass
@@ -54,6 +56,7 @@ class WeaponDetector:
         return len(self.templates)
 
     def detect(self, image_bytes: bytes) -> DetectResponse:
+        started_at = time.monotonic()
         image = self._decode_image(image_bytes)
         if image is None:
             return DetectResponse(
@@ -101,10 +104,16 @@ class WeaponDetector:
 
         candidate_groups: list[tuple[str, list[MatchCandidate]]] = []
         for region_name, region, offset in regions:
-            matches = self._match_region(region_name, region, offset)
+            if time.monotonic() - started_at > DETECT_TIME_BUDGET_SECONDS:
+                break
+            focused = self._focus_weapon_region(region_name, region, offset)
+            if focused is None:
+                continue
+            focused_region_name, focused_region, focused_offset = focused
+            matches = self._match_region(focused_region_name, focused_region, focused_offset)
             grouped = self._select_row(matches)
             if grouped:
-                candidate_groups.append((region_name, grouped))
+                candidate_groups.append((focused_region_name, grouped))
 
         if not candidate_groups:
             return DetectResponse(
@@ -121,12 +130,13 @@ class WeaponDetector:
         scores = [weapon.confidence for weapon in weapons]
         confidence = float(sum(scores) / max(1, len(scores))) * min(1.0, len(weapons) / 4)
         accepted = len(weapons) == 4 and confidence >= ACCEPT_AVG_SCORE and min(scores) >= ACCEPT_MIN_SCORE
+        response_weapons = weapons if accepted else []
 
         return DetectResponse(
             ok=True,
             mode="fixed_weapons" if accepted else "uncertain",
             confidence=round(confidence, 4),
-            weapons=weapons,
+            weapons=response_weapons,
             needs_review=not accepted,
             message=None if accepted else "ブキ候補を確認してください",
             debug={
@@ -134,6 +144,7 @@ class WeaponDetector:
                 "regions": [name for name, _, _ in regions],
                 "templates": self.template_count(),
                 "resize_ratio": resize_ratio,
+                "elapsed_seconds": round(time.monotonic() - started_at, 4),
                 "thresholds": {
                     "accept_avg": ACCEPT_AVG_SCORE,
                     "accept_min": ACCEPT_MIN_SCORE,
@@ -213,19 +224,30 @@ class WeaponDetector:
                 continue
             anchor_boxes.append((area, x, y, w, h))
 
-        for index, (_, x, y, w, h) in enumerate(sorted(anchor_boxes, reverse=True)[:5]):
+        clear_like_boxes = [
+            box
+            for box in anchor_boxes
+            if box[2] < height * 0.36 and box[3] / max(1, box[4]) >= 2.2 and box[0] >= max(800, width * height * 0.001)
+        ]
+        if not clear_like_boxes:
+            clear_like_boxes = [box for box in anchor_boxes if box[2] < height * 0.42]
+
+        anchor_regions: list[tuple[str, np.ndarray, tuple[int, int]]] = []
+        for index, (_, x, y, w, h) in enumerate(sorted(clear_like_boxes, reverse=True)[:1]):
             cx = x + w / 2
-            left = int(max(0, cx - width * 0.34))
-            right = int(min(width, cx + width * 0.34))
-            top = int(max(0, y - height * 0.035))
-            bottom = int(min(height, y + h + height * 0.12))
+            left = int(max(0, cx - width * 0.30))
+            right = int(min(width, cx + width * 0.30))
+            top = int(max(0, y + h * 0.55))
+            bottom = int(min(height, y + h + height * 0.105))
             if right - left >= 120 and bottom - top >= 45:
-                regions.append((f"green_anchor_{index + 1}", image[top:bottom, left:right], (left, top)))
+                anchor_regions.append((f"green_anchor_{index + 1}", image[top:bottom, left:right], (left, top)))
+
+        if anchor_regions:
+            return anchor_regions
 
         fallback_regions = [
-            ("upper_center", (0.08, 0.08, 0.86, 0.38)),
-            ("upper_wide", (0.02, 0.06, 0.96, 0.46)),
-            ("middle_top", (0.03, 0.12, 0.94, 0.52)),
+            ("upper_center", (0.12, 0.10, 0.76, 0.25)),
+            ("upper_wide", (0.06, 0.08, 0.88, 0.30)),
         ]
         for name, (fx, fy, fw, fh) in fallback_regions:
             left = int(width * fx)
@@ -243,6 +265,68 @@ class WeaponDetector:
             seen.add(key)
             deduped.append((name, region, (x, y)))
         return deduped
+
+    def _focus_weapon_region(
+        self, region_name: str, region: np.ndarray, offset: tuple[int, int]
+    ) -> tuple[str, np.ndarray, tuple[int, int]] | None:
+        """Trim anchor crops to the dark top weapon pill.
+
+        The green Clear!! anchor gets us close, but the resulting crop can still
+        include score panels and player text. Matching only inside the dark pill
+        keeps the detector fast and avoids confident matches on tiny text noise.
+        """
+        if not region_name.startswith("green_anchor_"):
+            return region_name, region, offset
+
+        region_h, region_w = region.shape[:2]
+        if region_h < 35 or region_w < 120:
+            return None
+
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        dark_mask = cv2.inRange(gray, 0, 58)
+        dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, np.ones((5, 21), dtype=np.uint8))
+        contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        boxes: list[tuple[int, int, int, int, int]] = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            if area < max(900, int(region_w * region_h * 0.035)):
+                continue
+            if y > region_h * 0.56:
+                continue
+            if w < region_w * 0.35:
+                continue
+            if h < 18 or h > min(86, region_h * 0.72):
+                continue
+            if w / max(1, h) < 3.0:
+                continue
+            boxes.append((area, x, y, w, h))
+
+        if boxes:
+            _, x, y, w, h = sorted(boxes, key=lambda item: (item[2], -item[0]))[0]
+            pad_x = max(2, int(w * 0.025))
+            pad_y = max(2, int(h * 0.12))
+            x0 = max(0, x - pad_x)
+            y0 = max(0, y - pad_y)
+            # The right side of the pill is the キケン度 label. Keep the left
+            # side where the four shift weapons live.
+            x1 = min(region_w, x + int(w * 0.66))
+            y1 = min(region_h, y + h + pad_y)
+        else:
+            # Safe fallback: keep only the upper band under Clear!!, avoiding
+            # both the Clear!! letters above and the score panels below. The
+            # anchor crop is already relative to Clear!!, so this stays stable
+            # across phone sizes better than absolute page coordinates.
+            x0 = 0
+            y0 = int(region_h * 0.24)
+            x1 = int(region_w * 0.68)
+            y1 = int(region_h * 0.60)
+
+        focused = region[y0:y1, x0:x1]
+        if focused.shape[0] < 25 or focused.shape[1] < 90:
+            return None
+        return f"{region_name}_weapon_pill", focused, (offset[0] + x0, offset[1] + y0)
 
     def _find_random_region(self, regions: list[tuple[str, np.ndarray, tuple[int, int]]]) -> tuple[str, list[tuple[int, int]]] | None:
         for name, region, _ in regions:
@@ -290,15 +374,20 @@ class WeaponDetector:
         region_gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
         region_h, region_w = region_gray.shape[:2]
         candidates: list[MatchCandidate] = []
+        if "weapon_pill" in region_name:
+            base_target = max(22, min(46, int(region_h * 0.50)))
+            multipliers = (0.76, 0.9, 1.04, 1.18, 1.34)
+        else:
+            base_target = max(16, min(72, int(region_h * 0.18)))
+            multipliers = (0.66, 0.82, 0.98, 1.14, 1.32)
 
         for template in self.templates:
             th, tw = template.gray.shape[:2]
             if th < 4 or tw < 4:
                 continue
 
-            base_target = max(18, min(90, int(region_h * 0.18)))
             base_scale = base_target / max(th, tw)
-            for multiplier in (0.55, 0.68, 0.80, 0.92, 1.0, 1.10, 1.22, 1.36, 1.52):
+            for multiplier in multipliers:
                 scale = base_scale * multiplier
                 scaled_w = max(8, int(tw * scale))
                 scaled_h = max(8, int(th * scale))
@@ -342,6 +431,9 @@ class WeaponDetector:
     def _select_row(self, candidates: list[MatchCandidate]) -> list[MatchCandidate]:
         if not candidates:
             return []
+        candidates = [candidate for candidate in candidates if self._is_plausible_icon_candidate(candidate)]
+        if not candidates:
+            return []
 
         groups: list[list[MatchCandidate]] = []
         for candidate in sorted(candidates, key=lambda item: item.center[1]):
@@ -365,6 +457,20 @@ class WeaponDetector:
         best_group = self._nms(best_group, iou_threshold=0.18)
         best_group = sorted(best_group[:4], key=lambda item: item.center[0])
         return best_group
+
+    @staticmethod
+    def _is_plausible_icon_candidate(candidate: MatchCandidate) -> bool:
+        if "weapon_pill" not in candidate.region_name:
+            return True
+        area = candidate.w * candidate.h
+        if area < 210:
+            return False
+        if max(candidate.w, candidate.h) < 18:
+            return False
+        if min(candidate.w, candidate.h) < 8:
+            return False
+        aspect = candidate.w / max(1, candidate.h)
+        return 0.28 <= aspect <= 3.6
 
     @staticmethod
     def _group_score(group: list[MatchCandidate]) -> float:
