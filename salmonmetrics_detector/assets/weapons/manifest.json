@@ -1,0 +1,955 @@
+{
+  "source": "@hacceuee/s3-pixel-icons 3.1.2 (CC-BY-NC-4.0) + stat.ink Salmon Run weapon API names",
+  "generatedAt": "2026-05-20T14:54:18.333Z",
+  "weapons": [
+    {
+      "key": "52gal",
+      "nameJa": ".52ガロン",
+      "nameEn": ".52 Gal",
+      "aliases": [
+        ".52ガロン",
+        ".52 Gal",
+        "52gal",
+        "50",
+        "52_gal"
+      ],
+      "icon": "/assets/weapons/52gal.png"
+    },
+    {
+      "key": "96gal",
+      "nameJa": ".96ガロン",
+      "nameEn": ".96 Gal",
+      "aliases": [
+        ".96ガロン",
+        ".96 Gal",
+        "96gal",
+        "80",
+        "96_gal"
+      ],
+      "icon": "/assets/weapons/96gal.png"
+    },
+    {
+      "key": "bamboo14mk1",
+      "nameJa": "14式竹筒銃・甲",
+      "nameEn": "Bamboozler 14 Mk I",
+      "aliases": [
+        "14式竹筒銃・甲",
+        "Bamboozler 14 Mk I",
+        "bamboo14mk1",
+        "2050",
+        "bamboozler_14_mk_i"
+      ],
+      "icon": "/assets/weapons/bamboo14mk1.png"
+    },
+    {
+      "key": "brella24mk1",
+      "nameJa": "24式張替傘・甲",
+      "nameEn": "Recycled Brella 24 Mk I",
+      "aliases": [
+        "24式張替傘・甲",
+        "Recycled Brella 24 Mk I",
+        "brella24mk1",
+        "6030",
+        "recycled_brella_24_mk_i"
+      ],
+      "icon": "/assets/weapons/brella24mk1.png"
+    },
+    {
+      "key": "liter4k_scope",
+      "nameJa": "4Kスコープ",
+      "nameEn": "E-liter 4K Scope",
+      "aliases": [
+        "4Kスコープ",
+        "E-liter 4K Scope",
+        "liter4k_scope",
+        "2040",
+        "e_liter_4k_scope"
+      ],
+      "icon": "/assets/weapons/liter4k_scope.png"
+    },
+    {
+      "key": "h3reelgun",
+      "nameJa": "H3リールガン",
+      "nameEn": "H-3 Nozzlenose",
+      "aliases": [
+        "H3リールガン",
+        "H-3 Nozzlenose",
+        "h3reelgun",
+        "310",
+        "h_3_nozzlenose"
+      ],
+      "icon": "/assets/weapons/h3reelgun.png"
+    },
+    {
+      "key": "l3reelgun",
+      "nameJa": "L3リールガン",
+      "nameEn": "L-3 Nozzlenose",
+      "aliases": [
+        "L3リールガン",
+        "L-3 Nozzlenose",
+        "l3reelgun",
+        "300",
+        "l_3_nozzlenose"
+      ],
+      "icon": "/assets/weapons/l3reelgun.png"
+    },
+    {
+      "key": "lact450",
+      "nameJa": "LACT-450",
+      "nameEn": "REEF-LUX 450",
+      "aliases": [
+        "LACT-450",
+        "REEF-LUX 450",
+        "lact450",
+        "7020",
+        "reef_lux_450"
+      ],
+      "icon": "/assets/weapons/lact450.png"
+    },
+    {
+      "key": "nzap85",
+      "nameJa": "N-ZAP85",
+      "nameEn": "N-ZAP '85",
+      "aliases": [
+        "N-ZAP85",
+        "N-ZAP '85",
+        "nzap85",
+        "60",
+        "n_zap_85"
+      ],
+      "icon": "/assets/weapons/nzap85.png"
+    },
+    {
+      "key": "rpen_5h",
+      "nameJa": "R-PEN/5H",
+      "nameEn": "Snipewriter 5H",
+      "aliases": [
+        "R-PEN/5H",
+        "Snipewriter 5H",
+        "rpen_5h",
+        "snipewriter_5h",
+        "2070"
+      ],
+      "icon": "/assets/weapons/rpen_5h.png"
+    },
+    {
+      "key": "rapid_elite",
+      "nameJa": "Rブラスターエリート",
+      "nameEn": "Rapid Blaster Pro",
+      "aliases": [
+        "Rブラスターエリート",
+        "Rapid Blaster Pro",
+        "rapid_elite",
+        "250",
+        "rapid_blaster_pro"
+      ],
+      "icon": "/assets/weapons/rapid_elite.png"
+    },
+    {
+      "key": "sblast92",
+      "nameJa": "S-BLAST92",
+      "nameEn": "S-BLAST '92",
+      "aliases": [
+        "S-BLAST92",
+        "S-BLAST '92",
+        "sblast92",
+        "260",
+        "s_blast_92"
+      ],
+      "icon": "/assets/weapons/sblast92.png"
+    },
+    {
+      "key": "examiner",
+      "nameJa": "イグザミナー",
+      "nameEn": "Heavy Edit Splatling",
+      "aliases": [
+        "イグザミナー",
+        "Heavy Edit Splatling",
+        "examiner",
+        "4050",
+        "heavy_edit_splatling"
+      ],
+      "icon": "/assets/weapons/examiner.png"
+    },
+    {
+      "key": "variableroller",
+      "nameJa": "ヴァリアブルローラー",
+      "nameEn": "Flingza Roller",
+      "aliases": [
+        "ヴァリアブルローラー",
+        "Flingza Roller",
+        "variableroller",
+        "1030",
+        "flingza_roller"
+      ],
+      "icon": "/assets/weapons/variableroller.png"
+    },
+    {
+      "key": "explosher",
+      "nameJa": "エクスプロッシャー",
+      "nameEn": "Explosher",
+      "aliases": [
+        "エクスプロッシャー",
+        "Explosher",
+        "explosher",
+        "3040"
+      ],
+      "icon": "/assets/weapons/explosher.png"
+    },
+    {
+      "key": "furo",
+      "nameJa": "オーバーフロッシャー",
+      "nameEn": "Bloblobber",
+      "aliases": [
+        "オーバーフロッシャー",
+        "Bloblobber",
+        "furo",
+        "3030",
+        "bloblobber"
+      ],
+      "icon": "/assets/weapons/furo.png"
+    },
+    {
+      "key": "carbon",
+      "nameJa": "カーボンローラー",
+      "nameEn": "Carbon Roller",
+      "aliases": [
+        "カーボンローラー",
+        "Carbon Roller",
+        "carbon",
+        "1000",
+        "carbon_roller"
+      ],
+      "icon": "/assets/weapons/carbon.png"
+    },
+    {
+      "key": "gaen_ff",
+      "nameJa": "ガエンFF",
+      "nameEn": "Douser Dualies FF",
+      "aliases": [
+        "ガエンFF",
+        "Douser Dualies FF",
+        "gaen_ff",
+        "5050",
+        "douser_dualies_ff"
+      ],
+      "icon": "/assets/weapons/gaen_ff.png"
+    },
+    {
+      "key": "campingshelter",
+      "nameJa": "キャンピングシェルター",
+      "nameEn": "Tenta Brella",
+      "aliases": [
+        "キャンピングシェルター",
+        "Tenta Brella",
+        "campingshelter",
+        "6010",
+        "tenta_brella"
+      ],
+      "icon": "/assets/weapons/campingshelter.png"
+    },
+    {
+      "key": "quadhopper_black",
+      "nameJa": "クアッドホッパーブラック",
+      "nameEn": "Dark Tetra Dualies",
+      "aliases": [
+        "クアッドホッパーブラック",
+        "Dark Tetra Dualies",
+        "quadhopper_black",
+        "5040",
+        "dark_tetra_dualies"
+      ],
+      "icon": "/assets/weapons/quadhopper_black.png"
+    },
+    {
+      "key": "kugelschreiber",
+      "nameJa": "クーゲルシュライバー",
+      "nameEn": "Ballpoint Splatling",
+      "aliases": [
+        "クーゲルシュライバー",
+        "Ballpoint Splatling",
+        "kugelschreiber",
+        "4030",
+        "ballpoint_splatling"
+      ],
+      "icon": "/assets/weapons/kugelschreiber.png"
+    },
+    {
+      "key": "kuma_shelter",
+      "nameJa": "クマサン印のシェルター",
+      "nameEn": "Grizzco Brella",
+      "aliases": [
+        "クマサン印のシェルター",
+        "Grizzco Brella",
+        "kuma_shelter",
+        "grizzco_brella",
+        "26900"
+      ],
+      "icon": "/assets/weapons/kuma_shelter.png"
+    },
+    {
+      "key": "kuma_stringer",
+      "nameJa": "クマサン印のストリンガー",
+      "nameEn": "Grizzco Stringer",
+      "aliases": [
+        "クマサン印のストリンガー",
+        "Grizzco Stringer",
+        "kuma_stringer",
+        "grizzco_stringer",
+        "27900"
+      ],
+      "icon": "/assets/weapons/kuma_stringer.png"
+    },
+    {
+      "key": "kuma_slosher",
+      "nameJa": "クマサン印のスロッシャー",
+      "nameEn": "Grizzco Slosher",
+      "aliases": [
+        "クマサン印のスロッシャー",
+        "Grizzco Slosher",
+        "kuma_slosher",
+        "grizzco_slosher",
+        "23900"
+      ],
+      "icon": "/assets/weapons/kuma_slosher.png"
+    },
+    {
+      "key": "kuma_charger",
+      "nameJa": "クマサン印のチャージャー",
+      "nameEn": "Grizzco Charger",
+      "aliases": [
+        "クマサン印のチャージャー",
+        "Grizzco Charger",
+        "kuma_charger",
+        "grizzco_charger",
+        "22900"
+      ],
+      "icon": "/assets/weapons/kuma_charger.png"
+    },
+    {
+      "key": "kuma_blaster",
+      "nameJa": "クマサン印のブラスター",
+      "nameEn": "Grizzco Blaster",
+      "aliases": [
+        "クマサン印のブラスター",
+        "Grizzco Blaster",
+        "kuma_blaster",
+        "grizzco_blaster",
+        "20900"
+      ],
+      "icon": "/assets/weapons/kuma_blaster.png"
+    },
+    {
+      "key": "kuma_maneuver",
+      "nameJa": "クマサン印のマニューバー",
+      "nameEn": "Grizzco Dualies",
+      "aliases": [
+        "クマサン印のマニューバー",
+        "Grizzco Dualies",
+        "kuma_maneuver",
+        "grizzco_dualies",
+        "25900"
+      ],
+      "icon": "/assets/weapons/kuma_maneuver.png"
+    },
+    {
+      "key": "kuma_roller",
+      "nameJa": "クマサン印のローラー",
+      "nameEn": "Grizzco Roller",
+      "aliases": [
+        "クマサン印のローラー",
+        "Grizzco Roller",
+        "kuma_roller",
+        "grizzco_roller",
+        "21900"
+      ],
+      "icon": "/assets/weapons/kuma_roller.png"
+    },
+    {
+      "key": "kuma_wiper",
+      "nameJa": "クマサン印のワイパー",
+      "nameEn": "Grizzco Splatana",
+      "aliases": [
+        "クマサン印のワイパー",
+        "Grizzco Splatana",
+        "kuma_wiper",
+        "28900",
+        "grizzco_splatana"
+      ],
+      "icon": "/assets/weapons/kuma_wiper.png"
+    },
+    {
+      "key": "clashblaster",
+      "nameJa": "クラッシュブラスター",
+      "nameEn": "Clash Blaster",
+      "aliases": [
+        "クラッシュブラスター",
+        "Clash Blaster",
+        "clashblaster",
+        "230",
+        "clash_blaster"
+      ],
+      "icon": "/assets/weapons/clashblaster.png"
+    },
+    {
+      "key": "kelvin525",
+      "nameJa": "ケルビン525",
+      "nameEn": "Glooga Dualies",
+      "aliases": [
+        "ケルビン525",
+        "Glooga Dualies",
+        "kelvin525",
+        "5020",
+        "glooga_dualies"
+      ],
+      "icon": "/assets/weapons/kelvin525.png"
+    },
+    {
+      "key": "jetsweeper",
+      "nameJa": "ジェットスイーパー",
+      "nameEn": "Jet Squelcher",
+      "aliases": [
+        "ジェットスイーパー",
+        "Jet Squelcher",
+        "jetsweeper",
+        "90",
+        "jet_squelcher"
+      ],
+      "icon": "/assets/weapons/jetsweeper.png"
+    },
+    {
+      "key": "jimuwiper",
+      "nameJa": "ジムワイパー",
+      "nameEn": "Splatana Stamper",
+      "aliases": [
+        "ジムワイパー",
+        "Splatana Stamper",
+        "jimuwiper",
+        "8000",
+        "splatana_stamper"
+      ],
+      "icon": "/assets/weapons/jimuwiper.png"
+    },
+    {
+      "key": "sharp",
+      "nameJa": "シャープマーカー",
+      "nameEn": "Splash-o-matic",
+      "aliases": [
+        "シャープマーカー",
+        "Splash-o-matic",
+        "sharp",
+        "20",
+        "splash_o_matic"
+      ],
+      "icon": "/assets/weapons/sharp.png"
+    },
+    {
+      "key": "squiclean_a",
+      "nameJa": "スクイックリンα",
+      "nameEn": "Classic Squiffer",
+      "aliases": [
+        "スクイックリンα",
+        "Classic Squiffer",
+        "squiclean_a",
+        "2000",
+        "classic_squiffer"
+      ],
+      "icon": "/assets/weapons/squiclean_a.png"
+    },
+    {
+      "key": "screwslosher",
+      "nameJa": "スクリュースロッシャー",
+      "nameEn": "Sloshing Machine",
+      "aliases": [
+        "スクリュースロッシャー",
+        "Sloshing Machine",
+        "screwslosher",
+        "3020",
+        "sloshing_machine"
+      ],
+      "icon": "/assets/weapons/screwslosher.png"
+    },
+    {
+      "key": "spygadget",
+      "nameJa": "スパイガジェット",
+      "nameEn": "Undercover Brella",
+      "aliases": [
+        "スパイガジェット",
+        "Undercover Brella",
+        "spygadget",
+        "6020",
+        "undercover_brella"
+      ],
+      "icon": "/assets/weapons/spygadget.png"
+    },
+    {
+      "key": "sputtery",
+      "nameJa": "スパッタリー",
+      "nameEn": "Dapple Dualies",
+      "aliases": [
+        "スパッタリー",
+        "Dapple Dualies",
+        "sputtery",
+        "5000",
+        "dapple_dualies"
+      ],
+      "icon": "/assets/weapons/sputtery.png"
+    },
+    {
+      "key": "sshooter",
+      "nameJa": "スプラシューター",
+      "nameEn": "Splattershot",
+      "aliases": [
+        "スプラシューター",
+        "Splattershot",
+        "sshooter",
+        "40",
+        "splattershot"
+      ],
+      "icon": "/assets/weapons/sshooter.png"
+    },
+    {
+      "key": "splatscope",
+      "nameJa": "スプラスコープ",
+      "nameEn": "Splatterscope",
+      "aliases": [
+        "スプラスコープ",
+        "Splatterscope",
+        "splatscope",
+        "2020",
+        "splatterscope"
+      ],
+      "icon": "/assets/weapons/splatscope.png"
+    },
+    {
+      "key": "splatspinner",
+      "nameJa": "スプラスピナー",
+      "nameEn": "Mini Splatling",
+      "aliases": [
+        "スプラスピナー",
+        "Mini Splatling",
+        "splatspinner",
+        "4000",
+        "mini_splatling"
+      ],
+      "icon": "/assets/weapons/splatspinner.png"
+    },
+    {
+      "key": "splatcharger",
+      "nameJa": "スプラチャージャー",
+      "nameEn": "Splat Charger",
+      "aliases": [
+        "スプラチャージャー",
+        "Splat Charger",
+        "splatcharger",
+        "2010",
+        "splat_charger"
+      ],
+      "icon": "/assets/weapons/splatcharger.png"
+    },
+    {
+      "key": "maneuver",
+      "nameJa": "スプラマニューバー",
+      "nameEn": "Splat Dualies",
+      "aliases": [
+        "スプラマニューバー",
+        "Splat Dualies",
+        "maneuver",
+        "5010",
+        "splat_dualies"
+      ],
+      "icon": "/assets/weapons/maneuver.png"
+    },
+    {
+      "key": "splatroller",
+      "nameJa": "スプラローラー",
+      "nameEn": "Splat Roller",
+      "aliases": [
+        "スプラローラー",
+        "Splat Roller",
+        "splatroller",
+        "1010",
+        "splat_roller"
+      ],
+      "icon": "/assets/weapons/splatroller.png"
+    },
+    {
+      "key": "spaceshooter",
+      "nameJa": "スペースシューター",
+      "nameEn": "Splattershot Nova",
+      "aliases": [
+        "スペースシューター",
+        "Splattershot Nova",
+        "spaceshooter",
+        "splattershot_nova",
+        "100"
+      ],
+      "icon": "/assets/weapons/spaceshooter.png"
+    },
+    {
+      "key": "soytuber",
+      "nameJa": "ソイチューバー",
+      "nameEn": "Goo Tuber",
+      "aliases": [
+        "ソイチューバー",
+        "Goo Tuber",
+        "soytuber",
+        "2060",
+        "goo_tuber"
+      ],
+      "icon": "/assets/weapons/soytuber.png"
+    },
+    {
+      "key": "dynamo",
+      "nameJa": "ダイナモローラー",
+      "nameEn": "Dynamo Roller",
+      "aliases": [
+        "ダイナモローラー",
+        "Dynamo Roller",
+        "dynamo",
+        "1020",
+        "dynamo_roller"
+      ],
+      "icon": "/assets/weapons/dynamo.png"
+    },
+    {
+      "key": "dualsweeper",
+      "nameJa": "デュアルスイーパー",
+      "nameEn": "Dualie Squelchers",
+      "aliases": [
+        "デュアルスイーパー",
+        "Dualie Squelchers",
+        "dualsweeper",
+        "5030",
+        "dualie_squelchers"
+      ],
+      "icon": "/assets/weapons/dualsweeper.png"
+    },
+    {
+      "key": "dentalwiper_mint",
+      "nameJa": "デンタルワイパーミント",
+      "nameEn": "Mint Decavitator",
+      "aliases": [
+        "デンタルワイパーミント",
+        "Mint Decavitator",
+        "dentalwiper_mint",
+        "8020",
+        "mint_decavitator"
+      ],
+      "icon": "/assets/weapons/dentalwiper_mint.png"
+    },
+    {
+      "key": "tristringer",
+      "nameJa": "トライストリンガー",
+      "nameEn": "Tri-Stringer",
+      "aliases": [
+        "トライストリンガー",
+        "Tri-Stringer",
+        "tristringer",
+        "7010",
+        "tri_stringer"
+      ],
+      "icon": "/assets/weapons/tristringer.png"
+    },
+    {
+      "key": "drivewiper",
+      "nameJa": "ドライブワイパー",
+      "nameEn": "Splatana Wiper",
+      "aliases": [
+        "ドライブワイパー",
+        "Splatana Wiper",
+        "drivewiper",
+        "8010",
+        "splatana_wiper"
+      ],
+      "icon": "/assets/weapons/drivewiper.png"
+    },
+    {
+      "key": "nova",
+      "nameJa": "ノヴァブラスター",
+      "nameEn": "Luna Blaster",
+      "aliases": [
+        "ノヴァブラスター",
+        "Luna Blaster",
+        "nova",
+        "200",
+        "luna_blaster"
+      ],
+      "icon": "/assets/weapons/nova.png"
+    },
+    {
+      "key": "nautilus47",
+      "nameJa": "ノーチラス47",
+      "nameEn": "Nautilus 47",
+      "aliases": [
+        "ノーチラス47",
+        "Nautilus 47",
+        "nautilus47",
+        "4040",
+        "nautilus_47"
+      ],
+      "icon": "/assets/weapons/nautilus47.png"
+    },
+    {
+      "key": "hydra",
+      "nameJa": "ハイドラント",
+      "nameEn": "Hydra Splatling",
+      "aliases": [
+        "ハイドラント",
+        "Hydra Splatling",
+        "hydra",
+        "4020",
+        "hydra_splatling"
+      ],
+      "icon": "/assets/weapons/hydra.png"
+    },
+    {
+      "key": "bucketslosher",
+      "nameJa": "バケットスロッシャー",
+      "nameEn": "Slosher",
+      "aliases": [
+        "バケットスロッシャー",
+        "Slosher",
+        "bucketslosher",
+        "3000",
+        "slosher"
+      ],
+      "icon": "/assets/weapons/bucketslosher.png"
+    },
+    {
+      "key": "pablo",
+      "nameJa": "パブロ",
+      "nameEn": "Inkbrush",
+      "aliases": [
+        "パブロ",
+        "Inkbrush",
+        "pablo",
+        "1100",
+        "inkbrush"
+      ],
+      "icon": "/assets/weapons/pablo.png"
+    },
+    {
+      "key": "parashelter",
+      "nameJa": "パラシェルター",
+      "nameEn": "Splat Brella",
+      "aliases": [
+        "パラシェルター",
+        "Splat Brella",
+        "parashelter",
+        "6000",
+        "splat_brella"
+      ],
+      "icon": "/assets/weapons/parashelter.png"
+    },
+    {
+      "key": "barrelspinner",
+      "nameJa": "バレルスピナー",
+      "nameEn": "Heavy Splatling",
+      "aliases": [
+        "バレルスピナー",
+        "Heavy Splatling",
+        "barrelspinner",
+        "4010",
+        "heavy_splatling"
+      ],
+      "icon": "/assets/weapons/barrelspinner.png"
+    },
+    {
+      "key": "hissen",
+      "nameJa": "ヒッセン",
+      "nameEn": "Tri-Slosher",
+      "aliases": [
+        "ヒッセン",
+        "Tri-Slosher",
+        "hissen",
+        "3010",
+        "tri_slosher"
+      ],
+      "icon": "/assets/weapons/hissen.png"
+    },
+    {
+      "key": "fincent",
+      "nameJa": "フィンセント",
+      "nameEn": "Painbrush",
+      "aliases": [
+        "フィンセント",
+        "Painbrush",
+        "fincent",
+        "vincent",
+        "1120",
+        "painbrush"
+      ],
+      "icon": "/assets/weapons/fincent.png"
+    },
+    {
+      "key": "prime",
+      "nameJa": "プライムシューター",
+      "nameEn": "Splattershot Pro",
+      "aliases": [
+        "プライムシューター",
+        "Splattershot Pro",
+        "prime",
+        "70",
+        "splattershot_pro"
+      ],
+      "icon": "/assets/weapons/prime.png"
+    },
+    {
+      "key": "furuido",
+      "nameJa": "フルイドV",
+      "nameEn": "Wellstring V",
+      "aliases": [
+        "フルイドV",
+        "Wellstring V",
+        "furuido",
+        "7030",
+        "wellstring_v"
+      ],
+      "icon": "/assets/weapons/furuido.png"
+    },
+    {
+      "key": "promodeler_mg",
+      "nameJa": "プロモデラーMG",
+      "nameEn": "Aerospray MG",
+      "aliases": [
+        "プロモデラーMG",
+        "Aerospray MG",
+        "promodeler_mg",
+        "30",
+        "aerospray_mg"
+      ],
+      "icon": "/assets/weapons/promodeler_mg.png"
+    },
+    {
+      "key": "bold",
+      "nameJa": "ボールドマーカー",
+      "nameEn": "Sploosh-o-matic",
+      "aliases": [
+        "ボールドマーカー",
+        "Sploosh-o-matic",
+        "bold",
+        "0",
+        "sploosh_o_matic"
+      ],
+      "icon": "/assets/weapons/bold.png"
+    },
+    {
+      "key": "hokusai",
+      "nameJa": "ホクサイ",
+      "nameEn": "Octobrush",
+      "aliases": [
+        "ホクサイ",
+        "Octobrush",
+        "hokusai",
+        "1110",
+        "octobrush"
+      ],
+      "icon": "/assets/weapons/hokusai.png"
+    },
+    {
+      "key": "hotblaster",
+      "nameJa": "ホットブラスター",
+      "nameEn": "Blaster",
+      "aliases": [
+        "ホットブラスター",
+        "Blaster",
+        "hotblaster",
+        "210",
+        "blaster"
+      ],
+      "icon": "/assets/weapons/hotblaster.png"
+    },
+    {
+      "key": "bottlegeyser",
+      "nameJa": "ボトルガイザー",
+      "nameEn": "Squeezer",
+      "aliases": [
+        "ボトルガイザー",
+        "Squeezer",
+        "bottlegeyser",
+        "400",
+        "squeezer"
+      ],
+      "icon": "/assets/weapons/bottlegeyser.png"
+    },
+    {
+      "key": "moprin",
+      "nameJa": "モップリン",
+      "nameEn": "Dread Wringer",
+      "aliases": [
+        "モップリン",
+        "Dread Wringer",
+        "moprin",
+        "3050",
+        "dread_wringer"
+      ],
+      "icon": "/assets/weapons/moprin.png"
+    },
+    {
+      "key": "rapid",
+      "nameJa": "ラピッドブラスター",
+      "nameEn": "Rapid Blaster",
+      "aliases": [
+        "ラピッドブラスター",
+        "Rapid Blaster",
+        "rapid",
+        "240",
+        "rapid_blaster"
+      ],
+      "icon": "/assets/weapons/rapid.png"
+    },
+    {
+      "key": "liter4k",
+      "nameJa": "リッター4K",
+      "nameEn": "E-liter 4K",
+      "aliases": [
+        "リッター4K",
+        "E-liter 4K",
+        "liter4k",
+        "2030",
+        "e_liter_4k"
+      ],
+      "icon": "/assets/weapons/liter4k.png"
+    },
+    {
+      "key": "longblaster",
+      "nameJa": "ロングブラスター",
+      "nameEn": "Range Blaster",
+      "aliases": [
+        "ロングブラスター",
+        "Range Blaster",
+        "longblaster",
+        "220",
+        "range_blaster"
+      ],
+      "icon": "/assets/weapons/longblaster.png"
+    },
+    {
+      "key": "wideroller",
+      "nameJa": "ワイドローラー",
+      "nameEn": "Big Swig Roller",
+      "aliases": [
+        "ワイドローラー",
+        "Big Swig Roller",
+        "wideroller",
+        "big_swig_roller",
+        "1040"
+      ],
+      "icon": "/assets/weapons/wideroller.png"
+    },
+    {
+      "key": "wakaba",
+      "nameJa": "わかばシューター",
+      "nameEn": "Splattershot Jr.",
+      "aliases": [
+        "わかばシューター",
+        "Splattershot Jr.",
+        "wakaba",
+        "10",
+        "splattershot_jr"
+      ],
+      "icon": "/assets/weapons/wakaba.png"
+    }
+  ]
+}
