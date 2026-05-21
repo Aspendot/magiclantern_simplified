@@ -13,7 +13,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.1.0"
+SERVICE_VERSION = "0.1.1"
 ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets" / "weapons"
 
 MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "1200"))
