@@ -1,0 +1,3 @@
+Detector templates downloaded from https://github.com/Leanny/splat3/tree/main/images/weapon_flat
+Names cross-referenced with https://stat.ink/api/v3/weapon?_lang_=en-US
+These are intended for local computer-vision matching in a personal fan project. Keep website display icons separate.

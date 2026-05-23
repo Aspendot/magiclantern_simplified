@@ -6,4 +6,4 @@ venv/
 env/
 .env
 .DS_Store
-
+/*.png

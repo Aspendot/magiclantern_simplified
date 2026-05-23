@@ -4,6 +4,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 
 import cv2
@@ -13,12 +14,15 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.1.1"
-ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets" / "weapons"
+SERVICE_VERSION = "0.2.2"
+ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
+DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
+FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
+ASSETS_DIR = Path(os.getenv("WEAPON_TEMPLATE_DIR", str(DEFAULT_TEMPLATE_DIR)))
 
 MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "1200"))
 MATCH_MIN_SCORE = float(os.getenv("MATCH_MIN_SCORE", "0.50"))
-ACCEPT_AVG_SCORE = float(os.getenv("ACCEPT_AVG_SCORE", "0.985"))
+ACCEPT_AVG_SCORE = float(os.getenv("ACCEPT_AVG_SCORE", "0.980"))
 ACCEPT_MIN_SCORE = float(os.getenv("ACCEPT_MIN_SCORE", "0.975"))
 RANDOM_GREEN_MIN_GROUP = int(os.getenv("RANDOM_GREEN_MIN_GROUP", "4"))
 DETECT_TIME_BUDGET_SECONDS = float(os.getenv("DETECT_TIME_BUDGET_SECONDS", "18"))
@@ -27,6 +31,7 @@ DETECT_TIME_BUDGET_SECONDS = float(os.getenv("DETECT_TIME_BUDGET_SECONDS", "18")
 @dataclass
 class PreparedTemplate:
     info: WeaponTemplateInfo
+    bgr: np.ndarray
     gray: np.ndarray
     mask: np.ndarray | None
 
@@ -41,6 +46,7 @@ class MatchCandidate:
     h: int
     region_name: str
     region_offset: tuple[int, int]
+    method: str = "opencv_template_match"
 
     @property
     def center(self) -> tuple[float, float]:
@@ -51,6 +57,9 @@ class WeaponDetector:
     def __init__(self, assets_dir: Path = ASSETS_DIR) -> None:
         self.assets_dir = assets_dir
         self.templates = self._load_templates()
+        if not self.templates and assets_dir != FALLBACK_TEMPLATE_DIR:
+            self.assets_dir = FALLBACK_TEMPLATE_DIR
+            self.templates = self._load_templates()
 
     def template_count(self) -> int:
         return len(self.templates)
@@ -110,10 +119,19 @@ class WeaponDetector:
             if focused is None:
                 continue
             focused_region_name, focused_region, focused_offset = focused
-            matches = self._match_region(focused_region_name, focused_region, focused_offset)
-            grouped = self._select_row(matches)
-            if grouped:
-                candidate_groups.append((focused_region_name, grouped))
+            if "weapon_pill" in focused_region_name:
+                grouped = self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset)
+                if grouped:
+                    candidate_groups.append((focused_region_name, grouped))
+                matches = self._match_region(focused_region_name, focused_region, focused_offset)
+                row_grouped = self._select_row(matches)
+                if row_grouped:
+                    candidate_groups.append((focused_region_name, row_grouped))
+            else:
+                matches = self._match_region(focused_region_name, focused_region, focused_offset)
+                grouped = self._select_row(matches)
+                if grouped:
+                    candidate_groups.append((focused_region_name, grouped))
 
         if not candidate_groups:
             return DetectResponse(
@@ -125,11 +143,11 @@ class WeaponDetector:
                 debug={"regions": [name for name, _, _ in regions], "templates": self.template_count()},
             )
 
-        region_name, best_group = max(candidate_groups, key=lambda item: self._group_score(item[1]))
+        region_name, best_group = self._best_candidate_group(candidate_groups)
         weapons = self._to_slots(best_group)
         scores = [weapon.confidence for weapon in weapons]
         confidence = float(sum(scores) / max(1, len(scores))) * min(1.0, len(weapons) / 4)
-        accepted = len(weapons) == 4 and confidence >= ACCEPT_AVG_SCORE and min(scores) >= ACCEPT_MIN_SCORE
+        accepted = self._is_accepted_group(best_group, confidence, scores)
         response_weapons = weapons if accepted else []
 
         return DetectResponse(
@@ -138,6 +156,7 @@ class WeaponDetector:
             confidence=round(confidence, 4),
             weapons=response_weapons,
             needs_review=not accepted,
+            source=best_group[0].method if best_group else "opencv_template_match",
             message=None if accepted else "ブキ候補を確認してください",
             debug={
                 "region": region_name,
@@ -145,6 +164,9 @@ class WeaponDetector:
                 "templates": self.template_count(),
                 "resize_ratio": resize_ratio,
                 "elapsed_seconds": round(time.monotonic() - started_at, 4),
+                "accepted": accepted,
+                "candidate_weapon_ids": [weapon.weapon_id for weapon in weapons],
+                "candidate_scores": [weapon.confidence for weapon in weapons],
                 "thresholds": {
                     "accept_avg": ACCEPT_AVG_SCORE,
                     "accept_min": ACCEPT_MIN_SCORE,
@@ -172,8 +194,10 @@ class WeaponDetector:
             cropped_bgr, cropped_mask = self._crop_to_mask(bgr, mask)
             if cropped_bgr is None:
                 continue
+            if cropped_mask is not None and cv2.countNonZero(cropped_mask) > 64:
+                cropped_mask = cv2.erode(cropped_mask, np.ones((2, 2), dtype=np.uint8), iterations=1)
             gray = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2GRAY)
-            templates.append(PreparedTemplate(info=info, gray=gray, mask=cropped_mask))
+            templates.append(PreparedTemplate(info=info, bgr=cropped_bgr, gray=gray, mask=cropped_mask))
         return templates
 
     @staticmethod
@@ -283,8 +307,8 @@ class WeaponDetector:
             return None
 
         gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        dark_mask = cv2.inRange(gray, 0, 58)
-        dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, np.ones((5, 21), dtype=np.uint8))
+        raw_dark_mask = cv2.inRange(gray, 0, 42)
+        dark_mask = cv2.morphologyEx(raw_dark_mask, cv2.MORPH_CLOSE, np.ones((5, 21), dtype=np.uint8))
         contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         boxes: list[tuple[int, int, int, int, int]] = []
@@ -305,14 +329,20 @@ class WeaponDetector:
 
         if boxes:
             _, x, y, w, h = sorted(boxes, key=lambda item: (item[2], -item[0]))[0]
-            pad_x = max(2, int(w * 0.025))
-            pad_y = max(2, int(h * 0.12))
-            x0 = max(0, x - pad_x)
-            y0 = max(0, y - pad_y)
+            row_counts = np.count_nonzero(raw_dark_mask[:, x : x + w], axis=1)
+            covered_rows = np.flatnonzero(row_counts >= w * 0.42)
+            covered_rows = covered_rows[(covered_rows >= y) & (covered_rows < y + h)]
+            if len(covered_rows) >= 18:
+                y = int(covered_rows[0])
+                h = int(covered_rows[-1] - covered_rows[0] + 1)
+            pad_x = max(2, int(w * 0.012))
+            pad_y = max(2, int(h * 0.09))
+            x0 = max(0, x + pad_x)
+            y0 = max(0, y + pad_y)
             # The right side of the pill is the キケン度 label. Keep the left
             # side where the four shift weapons live.
-            x1 = min(region_w, x + int(w * 0.66))
-            y1 = min(region_h, y + h + pad_y)
+            x1 = min(region_w, x + int(w * 0.56))
+            y1 = min(region_h, y + h - pad_y)
         else:
             # Safe fallback: keep only the upper band under Clear!!, avoiding
             # both the Clear!! letters above and the score panels below. The
@@ -320,7 +350,7 @@ class WeaponDetector:
             # across phone sizes better than absolute page coordinates.
             x0 = 0
             y0 = int(region_h * 0.24)
-            x1 = int(region_w * 0.68)
+            x1 = int(region_w * 0.58)
             y1 = int(region_h * 0.60)
 
         focused = region[y0:y1, x0:x1]
@@ -376,7 +406,7 @@ class WeaponDetector:
         candidates: list[MatchCandidate] = []
         if "weapon_pill" in region_name:
             base_target = max(22, min(46, int(region_h * 0.50)))
-            multipliers = (0.76, 0.9, 1.04, 1.18, 1.34)
+            multipliers = (0.50, 0.60, 0.66, 0.76, 0.90, 1.04, 1.18, 1.34, 1.50)
         else:
             base_target = max(16, min(72, int(region_h * 0.18)))
             multipliers = (0.66, 0.82, 0.98, 1.14, 1.32)
@@ -413,6 +443,9 @@ class WeaponDetector:
                 if math.isnan(score) or score < MATCH_MIN_SCORE:
                     continue
 
+                if "weapon_pill" in region_name:
+                    score = self._color_adjusted_score(template, region, score, max_loc[0], max_loc[1], scaled_w, scaled_h)
+
                 candidates.append(
                     MatchCandidate(
                         template=template,
@@ -423,10 +456,309 @@ class WeaponDetector:
                         h=scaled_h,
                         region_name=region_name,
                         region_offset=offset,
+                        method="opencv_color_template_match" if "weapon_pill" in region_name else "opencv_template_match",
                     )
                 )
 
+        if "weapon_pill" in region_name:
+            candidates = [candidate for candidate in candidates if self._is_plausible_icon_candidate(candidate)]
         return self._nms(candidates)
+
+    def _match_weapon_pill_slots(
+        self, region_name: str, region: np.ndarray, offset: tuple[int, int]
+    ) -> list[MatchCandidate]:
+        if not self.templates:
+            return []
+
+        foreground = self._pill_foreground_mask(region)
+        slot_geometry = self._slot_geometry_from_foreground(foreground)
+        if slot_geometry is None:
+            return []
+        centers, bounds = slot_geometry
+
+        region_gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        region_h, region_w = region_gray.shape[:2]
+        base_target = max(22, min(46, int(region_h * 0.50)))
+        multipliers = (0.76, 0.9, 1.04, 1.18, 1.34)
+        minimum_local_foreground = max(42, int(region_h * region_w * 0.0075))
+        slot_foreground_counts = [
+            max(1, int(cv2.countNonZero(foreground[:, bounds[index] : bounds[index + 1]]))) for index in range(4)
+        ]
+
+        slot_candidates: list[list[tuple[float, MatchCandidate]]] = [[] for _ in range(4)]
+        for template in self.templates:
+            th, tw = template.gray.shape[:2]
+            if th < 4 or tw < 4:
+                continue
+
+            base_scale = base_target / max(th, tw)
+            for multiplier in multipliers:
+                scale = base_scale * multiplier
+                scaled_w = max(8, int(tw * scale))
+                scaled_h = max(8, int(th * scale))
+                if scaled_w >= region_w or scaled_h >= region_h:
+                    continue
+                if scaled_w > 120 or scaled_h > 120:
+                    continue
+
+                resized = cv2.resize(template.gray, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
+                mask = None
+                if template.mask is not None:
+                    mask = cv2.resize(template.mask, (scaled_w, scaled_h), interpolation=cv2.INTER_NEAREST)
+                    if cv2.countNonZero(mask) < 12:
+                        mask = None
+
+                try:
+                    result = cv2.matchTemplate(region_gray, resized, cv2.TM_CCORR_NORMED, mask=mask)
+                except cv2.error:
+                    result = cv2.matchTemplate(region_gray, resized, cv2.TM_CCOEFF_NORMED)
+                result = np.nan_to_num(result, nan=-1.0, posinf=-1.0, neginf=-1.0)
+
+                for _ in range(3):
+                    _, max_value, _, max_loc = cv2.minMaxLoc(result)
+                    raw_score = float(max_value)
+                    if raw_score < MATCH_MIN_SCORE:
+                        break
+
+                    local_x, local_y = max_loc
+                    center_x = local_x + scaled_w / 2
+                    center_y = local_y + scaled_h / 2
+                    slot_index = min(range(4), key=lambda index: abs(center_x - centers[index]))
+                    slot_width = max(1, bounds[slot_index + 1] - bounds[slot_index])
+                    if center_x < bounds[slot_index] - scaled_w * 0.35:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+                    if center_x > bounds[slot_index + 1] + scaled_w * 0.35:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+                    if abs(center_x - centers[slot_index]) > max(slot_width * 0.65, scaled_w * 0.9):
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+                    if center_y < region_h * 0.04 or center_y > region_h * 0.92:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+
+                    overlap = self._foreground_overlap(foreground, mask, local_x, local_y, scaled_w, scaled_h)
+                    if overlap is None:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+                    local_iou, precision, recall, local_foreground_area = overlap
+                    slot_x0 = max(local_x, bounds[slot_index])
+                    slot_x1 = min(local_x + scaled_w, bounds[slot_index + 1])
+                    if slot_x0 >= slot_x1:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+                    slot_foreground_area = int(
+                        cv2.countNonZero(foreground[local_y : local_y + scaled_h, slot_x0:slot_x1])
+                    )
+                    slot_coverage = slot_foreground_area / slot_foreground_counts[slot_index]
+                    if local_foreground_area < minimum_local_foreground:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+                    if local_iou < 0.10 or precision < 0.18 or recall < 0.16:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+                    if slot_coverage < 0.55:
+                        self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+                        continue
+
+                    color_score = self._masked_color_similarity(template, region, local_x, local_y, scaled_w, scaled_h)
+
+                    overlap_score = local_iou * 0.55 + precision * 0.25 + recall * 0.20
+                    position_score = 1 - min(1.0, abs(center_x - centers[slot_index]) / max(1.0, slot_width * 0.5))
+                    size_score = min(1.0, (scaled_w * scaled_h) / max(1.0, slot_width * region_h * 0.42))
+                    fused_score = (
+                        self._apply_color_bonus(raw_score, color_score) * 0.42
+                        + overlap_score * 0.22
+                        + position_score * 0.08
+                        + size_score * 0.04
+                        + min(1.0, slot_coverage) * 0.24
+                    )
+
+                    candidate = MatchCandidate(
+                        template=template,
+                        score=fused_score,
+                        x=local_x + offset[0],
+                        y=local_y + offset[1],
+                        w=scaled_w,
+                        h=scaled_h,
+                        region_name=region_name,
+                        region_offset=offset,
+                        method="opencv_slot_template_match",
+                    )
+                    slot_candidates[slot_index].append((fused_score, candidate))
+                    self._suppress_match_location(result, local_x, local_y, scaled_w, scaled_h)
+
+        selected: list[MatchCandidate] = []
+        for candidates in slot_candidates:
+            if not candidates:
+                return []
+            best_by_weapon: dict[str, tuple[float, MatchCandidate]] = {}
+            for score, candidate in candidates:
+                weapon_id = candidate.template.info.weapon_id
+                if weapon_id not in best_by_weapon or score > best_by_weapon[weapon_id][0]:
+                    best_by_weapon[weapon_id] = (score, candidate)
+            ranked = sorted(best_by_weapon.values(), key=lambda item: item[0], reverse=True)
+            if not ranked:
+                return []
+            fused_score, candidate = ranked[0]
+            candidate.score = min(0.999, max(0.0, 0.90 + fused_score * 0.10))
+            selected.append(candidate)
+
+        return sorted(selected, key=lambda item: item.center[0])
+
+    def _color_adjusted_score(
+        self,
+        template: PreparedTemplate,
+        region: np.ndarray,
+        raw_score: float,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+    ) -> float:
+        color_score = self._masked_color_similarity(template, region, x, y, w, h)
+        return self._apply_color_bonus(raw_score, color_score)
+
+    @staticmethod
+    def _apply_color_bonus(raw_score: float, color_score: float) -> float:
+        if color_score <= 0:
+            return raw_score
+        return min(0.999, max(0.0, raw_score + (color_score - 0.55) * 0.08))
+
+    @staticmethod
+    def _masked_color_similarity(
+        template: PreparedTemplate,
+        region: np.ndarray,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+    ) -> float:
+        if x < 0 or y < 0 or x + w > region.shape[1] or y + h > region.shape[0]:
+            return 0.0
+        crop = region[y : y + h, x : x + w]
+        resized_bgr = cv2.resize(template.bgr, (w, h), interpolation=cv2.INTER_AREA)
+        if template.mask is not None:
+            mask = cv2.resize(template.mask, (w, h), interpolation=cv2.INTER_NEAREST)
+            foreground = mask > 0
+        else:
+            foreground = np.ones((h, w), dtype=bool)
+        if np.count_nonzero(foreground) < 8:
+            return 0.0
+
+        crop_hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV).astype(np.float32)
+        template_hsv = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hue_delta = np.abs(crop_hsv[:, :, 0] - template_hsv[:, :, 0])
+        hue_delta = np.minimum(hue_delta, 180 - hue_delta) / 90.0
+        saturation_delta = np.abs(crop_hsv[:, :, 1] - template_hsv[:, :, 1]) / 255.0
+        value_delta = np.abs(crop_hsv[:, :, 2] - template_hsv[:, :, 2]) / 255.0
+        distance = hue_delta * 0.45 + saturation_delta * 0.25 + value_delta * 0.30
+        return float(np.mean(1 - distance[foreground]))
+
+    @staticmethod
+    def _pill_foreground_mask(region: np.ndarray) -> np.ndarray:
+        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        saturation = hsv[:, :, 1]
+        value = hsv[:, :, 2]
+        foreground = np.where(((saturation > 35) & (value > 45)) | (gray > 85), 255, 0).astype(np.uint8)
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, np.ones((2, 2), dtype=np.uint8))
+        return foreground
+
+    @staticmethod
+    def _slot_geometry_from_foreground(foreground: np.ndarray) -> tuple[list[float], list[int]] | None:
+        points = cv2.findNonZero(foreground)
+        if points is None or len(points) < 80:
+            return None
+
+        foreground_h, foreground_w = foreground.shape[:2]
+        closed = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, np.ones((5, 7), dtype=np.uint8))
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        components: list[tuple[int, float]] = []
+        min_pixels = max(48, int(foreground_h * foreground_w * 0.006))
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            pixels = int(cv2.countNonZero(closed[y : y + h, x : x + w]))
+            if pixels < min_pixels:
+                continue
+            if x <= foreground_w * 0.06 and w <= foreground_w * 0.08:
+                continue
+            if w < foreground_w * 0.035 or h < foreground_h * 0.18:
+                continue
+            if w > foreground_w * 0.85 and h > foreground_h * 0.60:
+                continue
+            components.append((pixels, x + w / 2))
+
+        if len(components) >= 4:
+            sorted_centers = sorted(center for _, center in sorted(components, reverse=True)[:4])
+            min_gap = foreground_w * 0.075
+            if sorted_centers[-1] - sorted_centers[0] >= foreground_w * 0.35 and not any(
+                (right - left) < min_gap for left, right in zip(sorted_centers, sorted_centers[1:])
+            ):
+                bounds = [0]
+                for left, right in zip(sorted_centers, sorted_centers[1:]):
+                    bounds.append(int(round((left + right) / 2)))
+                bounds.append(foreground_w)
+                return sorted_centers, bounds
+
+        xs = points[:, 0, 0].astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.2)
+        compactness, _, centers = cv2.kmeans(xs.reshape(-1, 1), 4, None, criteria, 4, cv2.KMEANS_PP_CENTERS)
+        if not math.isfinite(float(compactness)):
+            return None
+        sorted_centers = sorted(float(center[0]) for center in centers)
+        if sorted_centers[-1] - sorted_centers[0] < foreground.shape[1] * 0.35:
+            return None
+        min_gap = foreground.shape[1] * 0.075
+        if any((right - left) < min_gap for left, right in zip(sorted_centers, sorted_centers[1:])):
+            return None
+
+        bounds = [0]
+        for left, right in zip(sorted_centers, sorted_centers[1:]):
+            bounds.append(int(round((left + right) / 2)))
+        bounds.append(foreground.shape[1])
+        return sorted_centers, bounds
+
+    @staticmethod
+    def _foreground_overlap(
+        foreground: np.ndarray,
+        template_mask: np.ndarray | None,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+    ) -> tuple[float, float, float, int] | None:
+        if template_mask is None:
+            candidate_mask = np.full((h, w), 255, dtype=np.uint8)
+        else:
+            candidate_mask = cv2.resize(template_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+            candidate_mask = np.where(candidate_mask > 0, 255, 0).astype(np.uint8)
+
+        if x < 0 or y < 0 or x + w > foreground.shape[1] or y + h > foreground.shape[0]:
+            return None
+        local_foreground = foreground[y : y + h, x : x + w]
+        foreground_area = int(cv2.countNonZero(local_foreground))
+        candidate_area = int(cv2.countNonZero(candidate_mask))
+        if foreground_area <= 0 or candidate_area <= 0:
+            return None
+        intersection = int(cv2.countNonZero(cv2.bitwise_and(local_foreground, candidate_mask)))
+        union = foreground_area + candidate_area - intersection
+        local_iou = intersection / union if union else 0.0
+        precision = intersection / candidate_area
+        recall = intersection / foreground_area
+        return local_iou, precision, recall, foreground_area
+
+    @staticmethod
+    def _suppress_match_location(result: np.ndarray, x: int, y: int, w: int, h: int) -> None:
+        radius_x = max(3, int(w * 0.45))
+        radius_y = max(3, int(h * 0.45))
+        x0 = max(0, x - radius_x)
+        y0 = max(0, y - radius_y)
+        x1 = min(result.shape[1], x + radius_x)
+        y1 = min(result.shape[0], y + radius_y)
+        result[y0:y1, x0:x1] = -1.0
 
     def _select_row(self, candidates: list[MatchCandidate]) -> list[MatchCandidate]:
         if not candidates:
@@ -452,10 +784,10 @@ class WeaponDetector:
         if not usable_groups:
             return []
 
-        best_group = max(usable_groups, key=self._group_score)
+        best_group = max(usable_groups, key=self._row_score)
         best_group = sorted(best_group, key=lambda item: item.score, reverse=True)
-        best_group = self._nms(best_group, iou_threshold=0.18)
-        best_group = sorted(best_group[:4], key=lambda item: item.center[0])
+        best_group = self._nms(best_group, iou_threshold=0.18, center_distance_factor=0.82)
+        best_group = self._best_even_row_sequence(best_group)
         return best_group
 
     @staticmethod
@@ -463,14 +795,14 @@ class WeaponDetector:
         if "weapon_pill" not in candidate.region_name:
             return True
         area = candidate.w * candidate.h
-        if area < 210:
+        if area < 90:
             return False
-        if max(candidate.w, candidate.h) < 18:
+        if max(candidate.w, candidate.h) < 12:
             return False
-        if min(candidate.w, candidate.h) < 8:
+        if min(candidate.w, candidate.h) < 7:
             return False
         aspect = candidate.w / max(1, candidate.h)
-        return 0.28 <= aspect <= 3.6
+        return 0.25 <= aspect <= 4.0
 
     @staticmethod
     def _group_score(group: list[MatchCandidate]) -> float:
@@ -482,18 +814,102 @@ class WeaponDetector:
         span_bonus = min(0.1, span / 1600)
         return float(sum(scores) / len(scores) + count_bonus + span_bonus)
 
+    def _row_score(self, group: list[MatchCandidate]) -> float:
+        score = self._group_score(group)
+        if not group or "weapon_pill" not in group[0].region_name:
+            return score
+
+        local_y_values = [item.center[1] - item.region_offset[1] for item in group]
+        median_local_y = float(np.median(local_y_values))
+        median_h = float(np.median([item.h for item in group]))
+
+        # In the focused weapon pill crop, the shift icons sit in the upper row.
+        # Lower rows are usually artifacts from the score-panel boundary or tiny
+        # player-row icons that happen to resemble weapon silhouettes.
+        top_row_bonus = max(0.0, 0.22 - median_local_y / 155.0)
+        lower_row_penalty = max(0.0, (median_local_y - median_h * 1.45) / 95.0)
+        return score + top_row_bonus - lower_row_penalty
+
     @staticmethod
-    def _nms(candidates: list[MatchCandidate], iou_threshold: float = 0.28) -> list[MatchCandidate]:
+    def _best_even_row_sequence(candidates: list[MatchCandidate]) -> list[MatchCandidate]:
+        if len(candidates) <= 4:
+            return sorted(candidates[:4], key=lambda item: item.center[0])
+
+        pool = sorted(candidates, key=lambda item: (item.score, item.w * item.h), reverse=True)[:14]
+        best_score = -1e9
+        best_combo: tuple[MatchCandidate, ...] | None = None
+        for combo in combinations(pool, 4):
+            ordered = tuple(sorted(combo, key=lambda item: item.center[0]))
+            gaps = np.array([right.center[0] - left.center[0] for left, right in zip(ordered, ordered[1:])], dtype=np.float32)
+            if float(np.min(gaps)) < max(18.0, float(np.median([item.w for item in ordered])) * 0.95):
+                continue
+            if float(np.max(gaps)) > max(58.0, float(np.median(gaps)) * 1.85):
+                continue
+            gap_cv = float(np.std(gaps) / max(1.0, np.mean(gaps)))
+            span = ordered[-1].center[0] - ordered[0].center[0]
+            avg_score = float(np.mean([item.score for item in ordered]))
+            avg_area = float(np.mean([item.w * item.h for item in ordered]))
+            area_bonus = min(0.025, avg_area / 32000.0)
+            span_bonus = min(0.035, span / 4200.0)
+            sequence_score = avg_score + area_bonus + span_bonus - gap_cv * 0.055
+            if sequence_score > best_score:
+                best_score = sequence_score
+                best_combo = ordered
+
+        if best_combo is None:
+            return sorted(candidates[:4], key=lambda item: item.center[0])
+        return list(best_combo)
+
+    @staticmethod
+    def _is_accepted_group(group: list[MatchCandidate], confidence: float, scores: list[float]) -> bool:
+        if len(group) != 4 or not scores:
+            return False
+        method = group[0].method
+        if method == "opencv_slot_template_match":
+            return confidence >= ACCEPT_AVG_SCORE and min(scores) >= ACCEPT_MIN_SCORE
+        if method == "opencv_color_template_match":
+            if confidence < 0.985 or min(scores) < 0.977:
+                return False
+            centers = sorted(item.center[0] for item in group)
+            gaps = [right - left for left, right in zip(centers, centers[1:])]
+            median_width = float(np.median([item.w for item in group]))
+            return min(gaps) >= max(18.0, median_width * 0.95)
+        return False
+
+    @staticmethod
+    def _nms(
+        candidates: list[MatchCandidate],
+        iou_threshold: float = 0.28,
+        center_distance_factor: float = 0.55,
+    ) -> list[MatchCandidate]:
         selected: list[MatchCandidate] = []
-        for candidate in sorted(candidates, key=lambda item: item.score, reverse=True):
+        for candidate in sorted(candidates, key=lambda item: (item.score, item.w * item.h), reverse=True):
             if any(_iou(candidate, kept) > iou_threshold for kept in selected):
                 continue
-            if any(_center_distance(candidate, kept) < max(candidate.w, candidate.h, kept.w, kept.h) * 0.55 for kept in selected):
+            if any(
+                _center_distance(candidate, kept) < max(candidate.w, candidate.h, kept.w, kept.h) * center_distance_factor
+                for kept in selected
+            ):
                 continue
             selected.append(candidate)
             if len(selected) >= 28:
                 break
         return selected
+
+    def _best_candidate_group(self, groups: list[tuple[str, list[MatchCandidate]]]) -> tuple[str, list[MatchCandidate]]:
+        accepted: list[tuple[str, list[MatchCandidate]]] = []
+        for region_name, group in groups:
+            scores = [item.score for item in group]
+            confidence = float(sum(scores) / max(1, len(scores))) * min(1.0, len(group) / 4)
+            if self._is_accepted_group(group, confidence, scores):
+                accepted.append((region_name, group))
+
+        slot_groups = [item for item in accepted if item[1] and item[1][0].method == "opencv_slot_template_match"]
+        if slot_groups:
+            return max(slot_groups, key=lambda item: self._group_score(item[1]))
+        if accepted:
+            return max(accepted, key=lambda item: self._group_score(item[1]))
+        return max(groups, key=lambda item: self._group_score(item[1]))
 
     def _to_slots(self, matches: list[MatchCandidate]) -> list[WeaponSlot]:
         slots: list[WeaponSlot] = []
@@ -506,7 +922,7 @@ class WeaponDetector:
                     weapon_name_ja=match.template.info.name_ja,
                     weapon_name_en=match.template.info.name_en,
                     confidence=round(max(0, min(1, match.score)), 4),
-                    method="opencv_template_match",
+                    method=match.method,
                     box=Box(x=match.x, y=match.y, w=match.w, h=match.h),
                     candidates=similar,
                 )

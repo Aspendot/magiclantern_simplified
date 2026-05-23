@@ -75,9 +75,16 @@ If the console does not offer a source-directory field, create a new GitHub repo
 3. Build candidate regions around those anchors plus upper-screen fallbacks.
 4. Detect random weapon rotations by green question-mark clusters.
 5. Multi-scale match weapon icon templates with OpenCV.
-6. Return `fixed_weapons`, `random_weapons`, `uncertain`, or `not_visible`.
+6. Fuse grayscale shape matching with masked HSV color agreement inside the weapon pill.
+7. Prefer strict four-slot geometry when it is available.
+8. Fall back to an evenly spaced row sequence only when it clears higher confidence and spacing checks.
+9. Return `fixed_weapons`, `random_weapons`, `uncertain`, or `not_visible`.
 
-This is the first deployable detector. Accuracy tuning should happen with real uploaded screenshots and debug outputs.
+This is still intentionally conservative: if the top weapon bar is missing, severely cropped, or does not clear confidence checks, the service should return review/uncertain instead of inventing weapons.
+
+## Experimental Training
+
+`tools/train_weapon_cnn.py` can train and export a small ONNX weapon-icon classifier from synthetic template renders. This is not used by the production detector yet because synthetic-only training did not generalize reliably to the tiny top-bar crops. Use it only after adding real labeled top-bar crops from confirmed screenshots.
 
 ## Assets
 
