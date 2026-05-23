@@ -14,7 +14,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.2"
+SERVICE_VERSION = "0.2.3"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -864,16 +864,17 @@ class WeaponDetector:
     def _is_accepted_group(group: list[MatchCandidate], confidence: float, scores: list[float]) -> bool:
         if len(group) != 4 or not scores:
             return False
+
         method = group[0].method
+
         if method == "opencv_slot_template_match":
             return confidence >= ACCEPT_AVG_SCORE and min(scores) >= ACCEPT_MIN_SCORE
+
+        # Do not accept loose full-region/color fallback as final truth.
+        # It can match tiny fragments and return fake high confidence.
         if method == "opencv_color_template_match":
-            if confidence < 0.985 or min(scores) < 0.977:
-                return False
-            centers = sorted(item.center[0] for item in group)
-            gaps = [right - left for left, right in zip(centers, centers[1:])]
-            median_width = float(np.median([item.w for item in group]))
-            return min(gaps) >= max(18.0, median_width * 0.95)
+            return False
+
         return False
 
     @staticmethod
