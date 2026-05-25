@@ -14,7 +14,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.3"
+SERVICE_VERSION = "0.2.4"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -121,8 +121,14 @@ class WeaponDetector:
             focused_region_name, focused_region, focused_offset = focused
             if "weapon_pill" in focused_region_name:
                 grouped = self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset)
+
+                if not grouped:
+                    grouped = self._match_weapon_pill_even_slots(focused_region_name, focused_region, focused_offset)
+
                 if grouped:
                     candidate_groups.append((focused_region_name, grouped))
+
+                # Keep loose matching only as a non-accepted debug fallback.
                 matches = self._match_region(focused_region_name, focused_region, focused_offset)
                 row_grouped = self._select_row(matches)
                 if row_grouped:
@@ -607,6 +613,152 @@ class WeaponDetector:
 
         return sorted(selected, key=lambda item: item.center[0])
 
+    def _match_weapon_pill_even_slots(
+        self, region_name: str, region: np.ndarray, offset: tuple[int, int]
+    ) -> list[MatchCandidate]:
+        """Fallback for visible top-bar icons when foreground component splitting fails.
+
+        The weapon pill layout is stable: four icons in a horizontal row.
+        This path splits the focused pill area into four even slots and matches
+        each slot independently, avoiding loose whole-region false positives.
+        """
+        if not self.templates:
+            return []
+
+        region_h, region_w = region.shape[:2]
+        if region_h < 22 or region_w < 90:
+            return []
+
+        foreground = self._pill_foreground_mask(region)
+        points = cv2.findNonZero(foreground)
+
+        if points is not None and len(points) >= 40:
+            xs = points[:, 0, 0]
+            left = int(np.percentile(xs, 1))
+            right = int(np.percentile(xs, 99))
+        else:
+            left = 0
+            right = region_w
+
+        span = right - left
+        if span < region_w * 0.45:
+            left = 0
+            right = region_w
+            span = right - left
+
+        pad = max(3, int(span * 0.035))
+        left = max(0, left - pad)
+        right = min(region_w, right + pad)
+        span = right - left
+
+        bounds = [int(round(left + span * i / 4)) for i in range(5)]
+        region_gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+
+        base_target = max(18, min(54, int(region_h * 0.68)))
+        multipliers = (0.68, 0.80, 0.92, 1.04, 1.16, 1.30, 1.46)
+
+        selected: list[MatchCandidate] = []
+
+        for slot_index in range(4):
+            slot_x0 = bounds[slot_index]
+            slot_x1 = bounds[slot_index + 1]
+            slot_w = slot_x1 - slot_x0
+            if slot_w < 12:
+                return []
+
+            search_x0 = max(0, slot_x0 - int(slot_w * 0.25))
+            search_x1 = min(region_w, slot_x1 + int(slot_w * 0.25))
+            search = region_gray[:, search_x0:search_x1]
+            search_color = region[:, search_x0:search_x1]
+
+            best: MatchCandidate | None = None
+            best_score = -1.0
+
+            for template in self.templates:
+                th, tw = template.gray.shape[:2]
+                if th < 4 or tw < 4:
+                    continue
+
+                base_scale = base_target / max(th, tw)
+
+                for multiplier in multipliers:
+                    scale = base_scale * multiplier
+                    scaled_w = max(8, int(tw * scale))
+                    scaled_h = max(8, int(th * scale))
+
+                    if scaled_w >= search.shape[1] or scaled_h >= search.shape[0]:
+                        continue
+                    if scaled_w > 120 or scaled_h > 120:
+                        continue
+
+                    resized = cv2.resize(template.gray, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
+
+                    mask = None
+                    if template.mask is not None:
+                        mask = cv2.resize(template.mask, (scaled_w, scaled_h), interpolation=cv2.INTER_NEAREST)
+                        if cv2.countNonZero(mask) < 12:
+                            mask = None
+
+                    try:
+                        result = cv2.matchTemplate(search, resized, cv2.TM_CCORR_NORMED, mask=mask)
+                    except cv2.error:
+                        result = cv2.matchTemplate(search, resized, cv2.TM_CCOEFF_NORMED)
+
+                    result = np.nan_to_num(result, nan=-1.0, posinf=-1.0, neginf=-1.0)
+                    _, raw_score, _, max_loc = cv2.minMaxLoc(result)
+                    raw_score = float(raw_score)
+
+                    if raw_score < MATCH_MIN_SCORE:
+                        continue
+
+                    local_x, local_y = max_loc
+                    global_x = search_x0 + local_x
+                    center_x = global_x + scaled_w / 2
+                    center_y = local_y + scaled_h / 2
+
+                    # Candidate center must actually belong to this slot.
+                    if center_x < slot_x0 - slot_w * 0.20 or center_x > slot_x1 + slot_w * 0.20:
+                        continue
+                    if center_y < region_h * 0.02 or center_y > region_h * 0.96:
+                        continue
+
+                    color_score = self._masked_color_similarity(
+                        template,
+                        search_color,
+                        local_x,
+                        local_y,
+                        scaled_w,
+                        scaled_h,
+                    )
+                    score = self._apply_color_bonus(raw_score, color_score)
+
+                    # Prefer candidates centered in the slot and not absurdly tiny.
+                    position_error = abs(center_x - ((slot_x0 + slot_x1) / 2)) / max(1.0, slot_w / 2)
+                    position_bonus = max(0.0, 1.0 - position_error) * 0.012
+                    size_bonus = min(0.010, (scaled_w * scaled_h) / max(1.0, region_h * slot_w) * 0.018)
+                    score = min(0.999, score + position_bonus + size_bonus)
+
+                    if score > best_score:
+                        best_score = score
+                        best = MatchCandidate(
+                            template=template,
+                            score=score,
+                            x=global_x + offset[0],
+                            y=local_y + offset[1],
+                            w=scaled_w,
+                            h=scaled_h,
+                            region_name=region_name,
+                            region_offset=offset,
+                            method="opencv_slot_template_match",
+                        )
+
+            if best is None:
+                return []
+
+            selected.append(best)
+
+        return sorted(selected, key=lambda item: item.center[0])
+
     def _color_adjusted_score(
         self,
         template: PreparedTemplate,
@@ -867,13 +1019,36 @@ class WeaponDetector:
 
         method = group[0].method
 
+        centers_x = sorted(item.center[0] for item in group)
+        centers_y = [item.center[1] for item in group]
+        widths = [item.w for item in group]
+        heights = [item.h for item in group]
+
+        median_w = float(np.median(widths))
+        median_h = float(np.median(heights))
+        gaps = [right - left for left, right in zip(centers_x, centers_x[1:])]
+        y_spread = max(centers_y) - min(centers_y)
+
+        # Must be four separate horizontal objects.
+        if min(gaps) < max(18.0, median_w * 0.85):
+            return False
+
+        # Must be on the same visual row.
+        if y_spread > max(14.0, median_h * 0.85):
+            return False
+
+        # Reject duplicate/overlapping boxes.
+        for left, right in combinations(group, 2):
+            if _iou(left, right) > 0.10:
+                return False
+
         if method == "opencv_slot_template_match":
             return confidence >= ACCEPT_AVG_SCORE and min(scores) >= ACCEPT_MIN_SCORE
 
-        # Do not accept loose full-region/color fallback as final truth.
-        # It can match tiny fragments and return fake high confidence.
         if method == "opencv_color_template_match":
-            return False
+            # Allow color fallback only when it is extremely confident.
+            # This should allow 2.png, but still reject IMG_3649.JPG.
+            return confidence >= 0.992 and min(scores) >= 0.985
 
         return False
 
