@@ -64,6 +64,12 @@ class TemplateImage:
     alpha: np.ndarray
 
 
+@dataclass(frozen=True)
+class RealCropImage:
+    weapon_id: str
+    bgr: np.ndarray
+
+
 def _load_template_image(info: WeaponTemplateInfo) -> TemplateImage | None:
     raw = cv2.imread(str(info.path), cv2.IMREAD_UNCHANGED)
     if raw is None:
@@ -190,29 +196,85 @@ def _postprocess(canvas: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return canvas
 
 
+def _load_real_crops(real_crop_dir: Path) -> list[RealCropImage]:
+    if not real_crop_dir.exists():
+        return []
+
+    crops: list[RealCropImage] = []
+    for weapon_dir in sorted(path for path in real_crop_dir.iterdir() if path.is_dir()):
+        for path in sorted(weapon_dir.glob("*.png")):
+            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+            if image is None or image.shape[0] < 4 or image.shape[1] < 4:
+                continue
+            crops.append(RealCropImage(weapon_id=weapon_dir.name, bgr=image))
+    return crops
+
+
+def _augment_real_crop(crop: RealCropImage, rng: np.random.Generator) -> np.ndarray:
+    source = crop.bgr.copy()
+    source = np.clip(source.astype(np.float32) * rng.uniform(0.78, 1.28) + rng.uniform(-18, 18), 0, 255).astype(np.uint8)
+    if rng.random() < 0.28:
+        source = cv2.GaussianBlur(source, (3, 3), rng.uniform(0.12, 0.75))
+
+    h, w = source.shape[:2]
+    target = rng.uniform(42, 62)
+    scale = target / max(h, w) * rng.uniform(0.88, 1.14)
+    new_w = max(6, min(IMAGE_SIZE, int(w * scale)))
+    new_h = max(6, min(IMAGE_SIZE, int(h * scale)))
+    icon = cv2.resize(source, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    canvas = _dark_canvas(rng)
+    x = int(IMAGE_SIZE / 2 - new_w / 2 + rng.uniform(-6, 6))
+    y = int(IMAGE_SIZE / 2 - new_h / 2 + rng.uniform(-6, 6))
+    x0 = max(0, x)
+    y0 = max(0, y)
+    x1 = min(IMAGE_SIZE, x + new_w)
+    y1 = min(IMAGE_SIZE, y + new_h)
+    if x0 < x1 and y0 < y1:
+        ix0 = x0 - x
+        iy0 = y0 - y
+        icon_crop = icon[iy0 : iy0 + (y1 - y0), ix0 : ix0 + (x1 - x0)]
+        # Real crops already include the dark pill background and antialiased
+        # edges, so paste them directly instead of synthesizing a fresh mask.
+        canvas[y0:y1, x0:x1] = icon_crop
+
+    return _postprocess(canvas, rng)
+
+
 class SyntheticWeaponDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     def __init__(
         self,
         templates: list[TemplateImage],
+        real_crops: list[RealCropImage],
         labels: list[str],
         samples: int,
         seed: int,
         unknown_fraction: float = 0.16,
+        real_fraction: float = 0.45,
     ) -> None:
         self.templates = templates
+        self.real_crops = real_crops
         self.labels = labels
         self.label_to_index = {label: index for index, label in enumerate(labels)}
         self.samples = samples
         self.seed = seed
         self.unknown_fraction = unknown_fraction
+        self.real_fraction = real_fraction
 
     def __len__(self) -> int:
         return self.samples
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         rng = np.random.default_rng(self.seed + index * 1009)
-        canvas = _dark_canvas(rng)
-        is_unknown = rng.random() < self.unknown_fraction
+        use_real = self.real_crops and rng.random() < self.real_fraction
+        is_unknown = (not use_real) and rng.random() < self.unknown_fraction
+        if use_real:
+            crop = self.real_crops[int(rng.integers(0, len(self.real_crops)))]
+            canvas = _augment_real_crop(crop, rng)
+            label = crop.weapon_id
+        else:
+            canvas = _dark_canvas(rng)
+
         if is_unknown:
             for _ in range(int(rng.integers(0, 3))):
                 template = self.templates[int(rng.integers(0, len(self.templates)))]
@@ -227,9 +289,10 @@ class SyntheticWeaponDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
                 )
             label = UNKNOWN_LABEL
         else:
-            template = self.templates[int(rng.integers(0, len(self.templates)))]
-            canvas = _paste_template(canvas, template, rng, centered=True, partial=False)
-            label = template.info.weapon_id
+            if not use_real:
+                template = self.templates[int(rng.integers(0, len(self.templates)))]
+                canvas = _paste_template(canvas, template, rng, centered=True, partial=False)
+                label = template.info.weapon_id
 
         canvas = _postprocess(canvas, rng)
         rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
@@ -249,13 +312,20 @@ def train(args: argparse.Namespace) -> None:
     if not templates:
         raise SystemExit(f"no templates loaded from {template_dir}")
 
+    real_crops = _load_real_crops(Path(args.real_crop_dir))
+    known_ids = {template.info.weapon_id for template in templates}
+    real_crops = [crop for crop in real_crops if crop.weapon_id in known_ids]
+    print(f"loaded {len(templates)} templates and {len(real_crops)} real crops", flush=True)
+
     labels = sorted(template.info.weapon_id for template in templates) + [UNKNOWN_LABEL]
     dataset = SyntheticWeaponDataset(
         templates=templates,
+        real_crops=real_crops,
         labels=labels,
         samples=args.samples,
         seed=args.seed,
         unknown_fraction=args.unknown_fraction,
+        real_fraction=args.real_fraction,
     )
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
 
@@ -313,6 +383,7 @@ def train(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--template-dir", default=str(ROOT / "assets" / "weapon_templates"))
+    parser.add_argument("--real-crop-dir", default=str(ROOT / "assets" / "training" / "real_weapon_crops"))
     parser.add_argument("--output-dir", default=str(ROOT / "assets" / "models"))
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--samples", type=int, default=18000)
@@ -321,6 +392,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--seed", type=int, default=20260522)
     parser.add_argument("--unknown-fraction", type=float, default=0.16)
+    parser.add_argument("--real-fraction", type=float, default=0.45)
     return parser.parse_args()
 
 

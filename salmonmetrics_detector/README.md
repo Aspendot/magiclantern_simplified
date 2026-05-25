@@ -77,14 +77,28 @@ If the console does not offer a source-directory field, create a new GitHub repo
 5. Multi-scale match weapon icon templates with OpenCV.
 6. Fuse grayscale shape matching with masked HSV color agreement inside the weapon pill.
 7. Prefer strict four-slot geometry when it is available.
-8. Fall back to an evenly spaced row sequence only when it clears higher confidence and spacing checks.
-9. Return `fixed_weapons`, `random_weapons`, `uncertain`, or `not_visible`.
+8. Classify extracted top-bar weapon components with the trained real-crop ONNX model when strict template slots do not resolve.
+9. Fall back to an evenly spaced row sequence only when it clears higher confidence and spacing checks.
+10. Return `fixed_weapons`, `random_weapons`, `uncertain`, or `not_visible`.
 
-This is still intentionally conservative: if the top weapon bar is missing, severely cropped, or does not clear confidence checks, the service should return review/uncertain instead of inventing weapons.
+The detector should resolve visible top-bar icons across device sizes before returning review/uncertain. It should still refuse cases where the bar is missing, severely cropped, or too degraded to support a real visual read.
 
-## Experimental Training
+## Weapon Classifier Training
 
-`tools/train_weapon_cnn.py` can train and export a small ONNX weapon-icon classifier from synthetic template renders. This is not used by the production detector yet because synthetic-only training did not generalize reliably to the tiny top-bar crops. Use it only after adding real labeled top-bar crops from confirmed screenshots.
+`tools/train_weapon_cnn.py` trains and exports the small ONNX weapon-icon classifier used by production. It mixes synthetic template renders with confirmed real top-bar crops stored under `assets/training/real_weapon_crops/<weapon_id>/`.
+
+Current runtime artifacts:
+
+```text
+assets/models/weapon_icon_classifier.onnx
+assets/models/weapon_icon_labels.json
+```
+
+Retrain after adding new confirmed screenshots/crops:
+
+```bash
+python tools/train_weapon_cnn.py --epochs 4 --samples 6000 --batch-size 128 --threads 4 --real-fraction 0.70
+```
 
 ## Assets
 

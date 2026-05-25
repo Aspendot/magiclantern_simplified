@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import time
@@ -14,11 +15,14 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.5"
+SERVICE_VERSION = "0.2.6"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
 ASSETS_DIR = Path(os.getenv("WEAPON_TEMPLATE_DIR", str(DEFAULT_TEMPLATE_DIR)))
+MODEL_DIR = ASSETS_ROOT / "models"
+CLASSIFIER_ONNX_PATH = Path(os.getenv("WEAPON_CLASSIFIER_ONNX", str(MODEL_DIR / "weapon_icon_classifier.onnx")))
+CLASSIFIER_LABELS_PATH = Path(os.getenv("WEAPON_CLASSIFIER_LABELS", str(MODEL_DIR / "weapon_icon_labels.json")))
 
 MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "1800"))
 MATCH_MIN_SCORE = float(os.getenv("MATCH_MIN_SCORE", "0.50"))
@@ -60,6 +64,7 @@ class WeaponDetector:
         if not self.templates and assets_dir != FALLBACK_TEMPLATE_DIR:
             self.assets_dir = FALLBACK_TEMPLATE_DIR
             self.templates = self._load_templates()
+        self.classifier_net, self.classifier_labels = self._load_classifier()
 
     def template_count(self) -> int:
         return len(self.templates)
@@ -123,12 +128,16 @@ class WeaponDetector:
                 grouped = self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset)
 
                 if not grouped:
+                    grouped = self._classify_weapon_pill_components(focused_region_name, focused_region, focused_offset)
+
+                if not grouped:
                     grouped = self._match_weapon_pill_even_slots(focused_region_name, focused_region, focused_offset)
 
                 if grouped:
                     candidate_groups.append((focused_region_name, grouped))
 
-                # Keep loose matching only as a non-accepted debug fallback.
+                # Keep loose matching behind the final geometry/score gate; the
+                # component classifier and slot matcher are preferred when they pass.
                 matches = self._match_region(focused_region_name, focused_region, focused_offset)
                 row_grouped = self._select_row(matches)
                 if row_grouped:
@@ -205,6 +214,20 @@ class WeaponDetector:
             gray = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2GRAY)
             templates.append(PreparedTemplate(info=info, bgr=cropped_bgr, gray=gray, mask=cropped_mask))
         return templates
+
+    @staticmethod
+    def _load_classifier() -> tuple[cv2.dnn_Net | None, list[str]]:
+        if not CLASSIFIER_ONNX_PATH.exists() or not CLASSIFIER_LABELS_PATH.exists():
+            return None, []
+        try:
+            labels_data = json.loads(CLASSIFIER_LABELS_PATH.read_text(encoding="utf-8"))
+            labels = [str(label) for label in labels_data.get("labels", [])]
+            if not labels:
+                return None, []
+            net = cv2.dnn.readNetFromONNX(str(CLASSIFIER_ONNX_PATH))
+            return net, labels
+        except Exception:
+            return None, []
 
     @staticmethod
     def _decode_image(image_bytes: bytes) -> np.ndarray | None:
@@ -612,6 +635,138 @@ class WeaponDetector:
             selected.append(candidate)
 
         return sorted(selected, key=lambda item: item.center[0])
+
+    def _classify_weapon_pill_components(
+        self, region_name: str, region: np.ndarray, offset: tuple[int, int]
+    ) -> list[MatchCandidate]:
+        if self.classifier_net is None or not self.classifier_labels:
+            return []
+
+        boxes = self._weapon_component_boxes(region)
+        if len(boxes) != 4:
+            return []
+
+        by_id = {template.info.weapon_id: template for template in self.templates}
+        selected: list[MatchCandidate] = []
+        for x, y, w, h in boxes:
+            crop = self._crop_component(region, x, y, w, h)
+            if crop is None:
+                return []
+            prediction = self._classify_component_crop(crop)
+            if prediction is None:
+                return []
+            weapon_id, probability, margin = prediction
+            template = by_id.get(weapon_id)
+            if template is None:
+                return []
+            if probability < 0.72 or margin < 0.18:
+                return []
+            selected.append(
+                MatchCandidate(
+                    template=template,
+                    score=min(0.999, probability),
+                    x=x + offset[0],
+                    y=y + offset[1],
+                    w=w,
+                    h=h,
+                    region_name=region_name,
+                    region_offset=offset,
+                    method="cnn_real_crop_classifier",
+                )
+            )
+
+        return sorted(selected, key=lambda item: item.center[0])
+
+    def _classify_component_crop(self, crop: np.ndarray) -> tuple[str, float, float] | None:
+        if self.classifier_net is None:
+            return None
+        canvas = self._component_classifier_canvas(crop)
+        rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        blob = rgb.transpose(2, 0, 1)[None, :, :, :]
+        self.classifier_net.setInput(blob)
+        logits = self.classifier_net.forward()[0].astype(np.float32)
+        logits -= float(np.max(logits))
+        exp = np.exp(logits)
+        probabilities = exp / max(float(np.sum(exp)), 1e-6)
+        ranked = np.argsort(probabilities)[::-1]
+        if len(ranked) < 2:
+            return None
+        best = int(ranked[0])
+        second = int(ranked[1])
+        if best >= len(self.classifier_labels):
+            return None
+        weapon_id = self.classifier_labels[best]
+        if weapon_id == "__unknown__":
+            return None
+        probability = float(probabilities[best])
+        margin = probability - float(probabilities[second])
+        return weapon_id, probability, margin
+
+    @staticmethod
+    def _component_classifier_canvas(crop: np.ndarray) -> np.ndarray:
+        h, w = crop.shape[:2]
+        side = max(h, w, 1)
+        canvas = np.zeros((side, side, 3), dtype=np.uint8)
+        y0 = (side - h) // 2
+        x0 = (side - w) // 2
+        canvas[y0 : y0 + h, x0 : x0 + w] = crop
+        return cv2.resize(canvas, (64, 64), interpolation=cv2.INTER_AREA)
+
+    @staticmethod
+    def _crop_component(region: np.ndarray, x: int, y: int, w: int, h: int) -> np.ndarray | None:
+        pad = max(3, int(max(w, h) * 0.28))
+        x0 = max(0, x - pad)
+        y0 = max(0, y - pad)
+        x1 = min(region.shape[1], x + w + pad)
+        y1 = min(region.shape[0], y + h + pad)
+        if x0 >= x1 or y0 >= y1:
+            return None
+        return region[y0:y1, x0:x1]
+
+    def _weapon_component_boxes(self, region: np.ndarray) -> list[tuple[int, int, int, int]]:
+        foreground = self._pill_foreground_mask(region)
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
+        contours, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        region_h, region_w = region.shape[:2]
+        boxes: list[tuple[int, int, int, int, int]] = []
+        min_pixels = max(70, int(region_h * region_w * 0.0035))
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            pixels = int(cv2.countNonZero(foreground[y : y + h, x : x + w]))
+            if pixels < min_pixels:
+                continue
+            if w < 8 or h < 8:
+                continue
+            if w > region_w * 0.85 or h > region_h * 0.80:
+                continue
+            if y > region_h * 0.78:
+                continue
+            boxes.append((x, y, w, h, pixels))
+
+        if len(boxes) < 4:
+            return []
+        boxes = sorted(boxes, key=lambda item: item[4], reverse=True)[:8]
+        best: tuple[float, tuple[tuple[int, int, int, int, int], ...]] | None = None
+        for combo in combinations(boxes, 4):
+            ordered = tuple(sorted(combo, key=lambda item: item[0] + item[2] / 2))
+            centers = [item[0] + item[2] / 2 for item in ordered]
+            gaps = [right - left for left, right in zip(centers, centers[1:])]
+            if min(gaps) < max(14.0, float(np.median([item[2] for item in ordered])) * 0.55):
+                continue
+            y_spread = max(item[1] + item[3] / 2 for item in ordered) - min(item[1] + item[3] / 2 for item in ordered)
+            if y_spread > max(28.0, float(np.median([item[3] for item in ordered])) * 1.25):
+                continue
+            gap_cv = float(np.std(gaps) / max(1.0, np.mean(gaps)))
+            area_score = float(sum(item[4] for item in ordered))
+            score = area_score - gap_cv * 500
+            if best is None or score > best[0]:
+                best = (score, ordered)
+
+        if best is None:
+            return []
+        return [(x, y, w, h) for x, y, w, h, _ in best[1]]
 
     def _match_weapon_pill_even_slots(
         self, region_name: str, region: np.ndarray, offset: tuple[int, int]
@@ -1045,6 +1200,9 @@ class WeaponDetector:
         if method == "opencv_slot_template_match":
             return confidence >= ACCEPT_AVG_SCORE and min(scores) >= ACCEPT_MIN_SCORE
 
+        if method == "cnn_real_crop_classifier":
+            return confidence >= 0.82 and min(scores) >= 0.72
+
         if method == "opencv_color_template_match":
             # Allow color fallback only when it is extremely confident.
             # This should allow 2.png, but still reject IMG_3649.JPG.
@@ -1080,9 +1238,10 @@ class WeaponDetector:
             if self._is_accepted_group(group, confidence, scores):
                 accepted.append((region_name, group))
 
-        slot_groups = [item for item in accepted if item[1] and item[1][0].method == "opencv_slot_template_match"]
-        if slot_groups:
-            return max(slot_groups, key=lambda item: self._group_score(item[1]))
+        for method in ("opencv_slot_template_match", "cnn_real_crop_classifier", "opencv_color_template_match"):
+            method_groups = [item for item in accepted if item[1] and item[1][0].method == method]
+            if method_groups:
+                return max(method_groups, key=lambda item: self._group_score(item[1]))
         if accepted:
             return max(accepted, key=lambda item: self._group_score(item[1]))
         return max(groups, key=lambda item: self._group_score(item[1]))
