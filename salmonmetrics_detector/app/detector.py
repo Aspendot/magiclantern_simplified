@@ -14,18 +14,18 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.4"
+SERVICE_VERSION = "0.2.5"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
 ASSETS_DIR = Path(os.getenv("WEAPON_TEMPLATE_DIR", str(DEFAULT_TEMPLATE_DIR)))
 
-MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "1200"))
+MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "1800"))
 MATCH_MIN_SCORE = float(os.getenv("MATCH_MIN_SCORE", "0.50"))
 ACCEPT_AVG_SCORE = float(os.getenv("ACCEPT_AVG_SCORE", "0.980"))
 ACCEPT_MIN_SCORE = float(os.getenv("ACCEPT_MIN_SCORE", "0.975"))
 RANDOM_GREEN_MIN_GROUP = int(os.getenv("RANDOM_GREEN_MIN_GROUP", "4"))
-DETECT_TIME_BUDGET_SECONDS = float(os.getenv("DETECT_TIME_BUDGET_SECONDS", "18"))
+DETECT_TIME_BUDGET_SECONDS = float(os.getenv("DETECT_TIME_BUDGET_SECONDS", "25"))
 
 
 @dataclass
