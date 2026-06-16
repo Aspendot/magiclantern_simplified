@@ -70,6 +70,22 @@ npx wrangler pages secret put GEMINI_API_KEY --project-name salmonmetrics
 npx wrangler pages deploy static --project-name salmonmetrics
 ```
 
+Manual weapon corrections are posted to `/api/weapon-feedback` and stored in Cloudflare KV. The production namespace is bound in `wrangler.toml` as:
+
+```toml
+[[kv_namespaces]]
+binding = "WEAPON_FEEDBACK"
+id = "2920b4dffe964827b886c8204c4494cb"
+```
+
+Set an export token if you want the detector training workflow to pull feedback records:
+
+```powershell
+npx wrangler pages secret put WEAPON_FEEDBACK_EXPORT_TOKEN --project-name salmonmetrics
+```
+
+Use the same value as the GitHub repository secret `WEAPON_FEEDBACK_EXPORT_TOKEN` for the scheduled retraining workflow.
+
 Cloudflare will give you a free URL like `https://salmonmetrics.pages.dev`. If that project name is taken, use a more specific name:
 
 ```powershell
@@ -81,6 +97,7 @@ The Cloudflare deployment uses the same `/api/*` routes as the local app through
 Required production secret:
 
 - `GEMINI_API_KEY`: your Google AI Studio Gemini API key.
+- `WEAPON_FEEDBACK_EXPORT_TOKEN`: token for exporting correction feedback into detector training.
 
 Optional production variables:
 

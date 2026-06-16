@@ -106,6 +106,41 @@ Retrain after adding new confirmed screenshots/crops:
 python tools/train_weapon_cnn.py --epochs 4 --samples 6000 --batch-size 128 --threads 4 --real-fraction 0.70
 ```
 
+## User Feedback Training Loop
+
+The web app stores manual weapon corrections in Cloudflare KV through `/api/weapon-feedback`.
+Each record contains the submitted weapon-strip image, the detector/Gemini weapons, the user-corrected weapons, and the changed slot metadata.
+
+Import feedback into real-crop training data:
+
+```powershell
+cd D:\gitProjects\magiclantern_simplified-1
+$env:WEAPON_FEEDBACK_EXPORT_TOKEN="..."
+python salmonmetrics_detector\tools\import_weapon_feedback.py --feedback-url https://salmonmetrics.pages.dev/api/weapon-feedback
+```
+
+Import, retrain, and run the confirmed screenshot regression gate in one command:
+
+```powershell
+python salmonmetrics_detector\tools\retrain_from_feedback.py `
+  --epochs 8 `
+  --samples 14000 `
+  --batch-size 192 `
+  --threads 4 `
+  --real-fraction 0.76 `
+  --unknown-fraction 0.12
+```
+
+The importer maps corrected display names or stable weapon IDs through `assets/weapon_templates/manifest.json`, extracts four visual slot crops from the submitted weapon-strip image, and writes normal training crops to:
+
+```text
+assets/training/real_weapon_crops/<weapon_id>/feedback_<feedback_id>_slotN.png
+```
+
+No deterministic per-screenshot rule is added. The corrected examples only influence the detector by becoming additional labeled real-crop training data for the CNN classifier.
+
+GitHub Actions workflow `.github/workflows/salmonmetrics-feedback-train.yml` can run this loop on a schedule or manually. Configure repository secret `WEAPON_FEEDBACK_EXPORT_TOKEN` to the same value used by the Pages feedback export endpoint. When the workflow produces model/training changes, it commits them to `dev`; the existing Cloud Run auto-deploy path then publishes the new detector.
+
 ## Assets
 
 Weapon icons are copied from the existing SalmonMetrics web app assets.

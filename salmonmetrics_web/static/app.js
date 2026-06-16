@@ -153,6 +153,8 @@ const state = {
   weaponCandidates: [],
   weaponManifest: [],
   weaponTemplates: [],
+  lastOcrImages: null,
+  lastFeedbackSubmission: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -1538,6 +1540,7 @@ async function handleOcrUpload(event) {
   elements.ocrResult.replaceChildren();
   state.ocrWarnings = [];
   state.ocrWeapons = [];
+  state.lastOcrImages = null;
   setOcrStatus("画像を解析中");
   setOcrEngine("アップロード準備中");
   elements.ocrForm.classList.add("is-busy");
@@ -1569,6 +1572,7 @@ function resetOcrPanel() {
   elements.ocrClearButton.hidden = true;
   state.ocrWarnings = [];
   state.ocrWeapons = [];
+  state.lastOcrImages = null;
   clearOcrFields(elements.ocrForm, "STANDARD");
   elements.ocrMode.value = "STANDARD";
   elements.ocrStageSelect.value = "";
@@ -1626,6 +1630,10 @@ async function recognizeScreenshot(file) {
   const imageDataUrl = await imageFileToDataUrl(file);
   setOcrStatus("アップロード完了");
   const images = await createAiOcrImages(imageDataUrl);
+  state.lastOcrImages = {
+    weapons: images.weapons || "",
+    full: images.full && images.full.length <= 2_400_000 ? images.full : "",
+  };
   setOcrEngine("AIが画像を解析中");
   const response = await postOcrImagesWithRetries(images);
   if (response?.result) {
@@ -2931,7 +2939,10 @@ function applyWeaponCorrection(slot, weaponName) {
   while (weapons.length < 4) weapons.push("");
   const previous = weapons[slot] || "";
   if (previous === weaponName) return;
-  recordWeaponCorrection(result, slot, previous, weaponName);
+  const detectedWeapons = weapons.slice(0, 4);
+  const correctedWeapons = weapons.slice(0, 4);
+  correctedWeapons[slot] = weaponName;
+  recordWeaponCorrection(result, slot, previous, weaponName, correctedWeapons, detectedWeapons);
   weapons[slot] = weaponName;
   result.weapons = weapons.slice(0, 4);
   result.weaponSource = "manual";
@@ -2941,23 +2952,61 @@ function applyWeaponCorrection(slot, weaponName) {
   toast("ブキを修正しました");
 }
 
-function recordWeaponCorrection(result, slot, previous, corrected) {
+function recordWeaponCorrection(result, slot, previous, corrected, correctedWeapons = [], detectedWeapons = []) {
+  const feedback = {
+    ts: new Date().toISOString(),
+    slot,
+    previous,
+    corrected,
+    correctedWeapons: correctedWeapons.slice(0, 4),
+    detectedWeapons: detectedWeapons.slice(0, 4),
+    source: result.weaponSource || "",
+    stage: result.stage || "",
+    stampedAt: result.stampedAt || "",
+    mode: result.mode || "",
+    provider: result.provider || "",
+    model: result.model || "",
+  };
   try {
     const list = JSON.parse(localStorage.getItem(STORAGE_WEAPON_CORRECTIONS) || "[]");
-    list.push({
-      ts: new Date().toISOString(),
-      slot,
-      previous,
-      corrected,
-      source: result.weaponSource || "",
-      stage: result.stage || "",
-      stampedAt: result.stampedAt || "",
-      model: result.model || "",
-    });
+    list.push(feedback);
     localStorage.setItem(STORAGE_WEAPON_CORRECTIONS, JSON.stringify(list.slice(-500)));
   } catch {
     // Best-effort capture; a storage failure must never break the correction.
   }
+  submitWeaponCorrectionFeedback(result, feedback).catch(() => {});
+}
+
+async function submitWeaponCorrectionFeedback(result, feedback) {
+  const images = state.lastOcrImages || {};
+  if (!images.weapons) return;
+  const response = await api("/api/weapon-feedback", {
+    method: "POST",
+    body: JSON.stringify({
+      page: "ocr",
+      clientId: currentClientId(),
+      userAgent: navigator.userAgent || "",
+      mode: result.mode || "",
+      stage: result.stage || "",
+      stampedAt: result.stampedAt || "",
+      provider: result.provider || "",
+      model: result.model || "",
+      weaponSource: feedback.source || result.weaponSource || "",
+      detectedWeapons: feedback.detectedWeapons,
+      correctedWeapons: feedback.correctedWeapons,
+      changedSlots: [{
+        slot: feedback.slot + 1,
+        previous: feedback.previous,
+        corrected: feedback.corrected,
+      }],
+      images: {
+        weapons: images.weapons,
+        full: images.full || undefined,
+      },
+    }),
+  });
+  state.lastFeedbackSubmission = response;
+  toast("ブキ修正フィードバックを送信しました");
 }
 
 function formatOcrWarningSummary(warnings = []) {
