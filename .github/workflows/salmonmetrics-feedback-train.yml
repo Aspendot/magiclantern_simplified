@@ -11,11 +11,19 @@ permissions:
 jobs:
   train:
     runs-on: ubuntu-latest
-    if: ${{ secrets.WEAPON_FEEDBACK_EXPORT_TOKEN != '' }}
+    env:
+      WEAPON_FEEDBACK_EXPORT_TOKEN: ${{ secrets.WEAPON_FEEDBACK_EXPORT_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: dev
+
+      - name: Check feedback export token
+        run: |
+          if [ -z "$WEAPON_FEEDBACK_EXPORT_TOKEN" ]; then
+            echo "::error::WEAPON_FEEDBACK_EXPORT_TOKEN is not configured."
+            exit 1
+          fi
 
       - uses: actions/setup-python@v5
         with:
@@ -28,8 +36,6 @@ jobs:
           python -m pip install -r salmonmetrics_detector/requirements-train.txt
 
       - name: Import feedback, retrain, and verify
-        env:
-          WEAPON_FEEDBACK_EXPORT_TOKEN: ${{ secrets.WEAPON_FEEDBACK_EXPORT_TOKEN }}
         run: |
           python salmonmetrics_detector/tools/retrain_from_feedback.py \
             --epochs 8 \
