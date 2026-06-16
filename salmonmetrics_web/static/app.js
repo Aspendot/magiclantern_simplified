@@ -1624,11 +1624,8 @@ function modelAttemptPath(attempts = []) {
 async function recognizeScreenshot(file) {
   const imageDataUrl = await imageFileToDataUrl(file);
   setOcrStatus("アップロード完了");
-  setOcrEngine("ブキを画像照合中");
   const images = await createAiOcrImages(imageDataUrl);
-  const weaponHints = await recognizeLocalWeaponStrip(images.weapons).catch(() => null);
   setOcrEngine("AIが画像を解析中");
-  images.weaponHints = weaponHints;
   const response = await postOcrImagesWithRetries(images);
   if (response?.result) {
     return normalizeSmartOcrResult(response.result, {
@@ -1676,8 +1673,8 @@ async function postOcrImages(images) {
       images: {
         full: images.full,
         sheet: images.sheet,
+        weapons: images.weapons,
       },
-      weaponHints: images.weaponHints || null,
     }),
   });
   const text = await response.text();

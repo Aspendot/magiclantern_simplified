@@ -412,7 +412,7 @@ export async function onRequestPost({ request, env }) {
     // instead of blocking on the slow Cloud Run icon detector. The detector is only
     // consulted as a fallback (resolveDeterministicWeapons) when the schedule misses.
     const schedulePromise = fetchCoopSchedule(env).catch(() => null);
-    const weaponContext = { schedulePromise, images, env };
+    const weaponContext = { schedulePromise };
     const extraction = await extractWithGemini({ apiKey, models, images, weaponContext, debug });
     return jsonResponse(extraction);
   } catch (error) {
@@ -573,6 +573,10 @@ async function callGemini({ apiKey, model, images, weaponHints, attempt, errors 
   if (images.sheet) {
     parts.push({ text: "次の2枚目は、同じ画像を重要領域ごとに並べた確認用パネルです。元画像と矛盾する場合は元画像を優先してください。" });
     parts.push(imagePart(images.sheet));
+  }
+  if (images.weapons) {
+    parts.push({ text: "次の画像は支給ブキ4つだけを拡大・高解像度化した切り抜きです。weapons はこの画像を最優先で、左から順に4つのメインブキ名を候補リストから読み取ってください。" });
+    parts.push(imagePart(images.weapons));
   }
 
   const response = await fetch(endpoint, {
@@ -812,36 +816,20 @@ async function resolveDeterministicWeapons(result, context = null) {
   }
 
   // 2) Public Salmon Run schedule, keyed by the screenshot's printed play
-  //    timestamp. Exact by construction, so it takes priority over any
-  //    pixel-level icon guess.
+  //    timestamp. Exact by construction.
   const scheduled = await scheduleRotationFor(result, context?.schedulePromise);
   if (scheduled) {
     applyResolvedWeapons(result, scheduled.weapons, "schedule", scheduled.stage);
     return;
   }
 
-  // 3) Icon detector fallback, consulted lazily only when the schedule cannot
-  //    resolve (stamp-less or out-of-window screenshots). Never trusts
-  //    client-supplied hints as authoritative.
-  const detected = await detectorFallback(context);
-  if (detected?.mode === "random_weapons") {
-    applyResolvedWeapons(result, ["ランダム", "ランダム", "ランダム", "ランダム"], "random");
-    return;
-  }
-  if (detected?.weapons?.length === 4) {
-    applyResolvedWeapons(result, detected.weapons, "local_match");
-    return;
-  }
-
-  // 4) Nothing deterministic — keep Gemini's own read, flagged for review.
+  // 3) Otherwise trust Gemini's own read. Its weapon output is constrained to
+  //    the known weapon list and it sees a dedicated upscaled crop of the supply
+  //    bar, so it is the recognizer for stamp-less / out-of-window screenshots.
+  //    Tiny or cropped icons can't always be pinned from pixels, so a partial
+  //    read (< 4) is left blank for the 1-tap correction UI.
   result.weapons = normalizeWeapons(result.weapons);
   result.weaponSource = result.weapons.length === 4 ? "vlm" : "";
-}
-
-async function detectorFallback(context) {
-  if (!context?.images?.full) return null;
-  const detectorHints = await detectWeaponsWithService(context.images.full, context.env).catch(() => null);
-  return detectorHints ? localWeaponHintFor(detectorHints) : null;
 }
 
 function applyResolvedWeapons(result, weapons, source, stage = "") {
@@ -1213,6 +1201,7 @@ function normalizeImageSet(body = {}) {
   return {
     full: normalizeImagePayload(incoming.full || body.image),
     sheet: normalizeImagePayload(incoming.sheet),
+    weapons: normalizeImagePayload(incoming.weapons),
   };
 }
 
