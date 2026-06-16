@@ -41,7 +41,7 @@ jobs:
 
       - name: Commit updated classifier artifacts
         run: |
-          if git diff --quiet -- salmonmetrics_detector; then
+          if [ -z "$(git status --porcelain -- salmonmetrics_detector)" ]; then
             echo "No detector training changes to commit."
             exit 0
           fi
@@ -50,5 +50,9 @@ jobs:
           git add salmonmetrics_detector/assets/models \
             salmonmetrics_detector/assets/training/real_weapon_crops \
             salmonmetrics_detector/assets/training/feedback_imports
+          if git diff --cached --quiet; then
+            echo "No staged detector training changes to commit."
+            exit 0
+          fi
           git commit -m "Train weapon classifier from user feedback"
           git push origin HEAD:dev

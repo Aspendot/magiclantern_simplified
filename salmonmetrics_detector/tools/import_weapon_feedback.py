@@ -37,7 +37,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--import-log-dir", type=Path, default=DEFAULT_IMPORT_DIR)
     parser.add_argument("--limit", type=int, default=1000)
-    parser.add_argument("--changed-only", action="store_true", help="Import only changed slots instead of all four corrected slots.")
+    parser.add_argument(
+        "--all-slots",
+        action="store_true",
+        help="Import all four corrected slots. By default only user-changed slots are imported to avoid training on unconfirmed labels.",
+    )
+    parser.add_argument(
+        "--changed-only",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -234,7 +243,7 @@ def import_records(args: argparse.Namespace) -> int:
     for source, record in records:
         record_id = safe_slug(str(record.get("id") or Path(source).stem))
         image_bytes = feedback_image_bytes(record)
-        labels = corrected_weapon_ids(record, resolver, args.changed_only)
+        labels = corrected_weapon_ids(record, resolver, changed_only=not args.all_slots)
         if not image_bytes or not labels:
             skipped += 1
             print(f"SKIP {record_id}: missing image or resolvable corrected labels")

@@ -39,14 +39,18 @@ DEFAULT_NEGATIVE_CASES = (
     NegativeCase("Mualani-69ad399dbeebbaaa668ed911.png"),
 )
 
+DEFAULT_REPO_SCREENSHOTS_DIR = ROOT / "assets" / "regression_screenshots"
+DEFAULT_LOCAL_DOWNLOADS_DIR = Path(r"C:\Users\Amir\Downloads")
+
 
 def parse_args() -> argparse.Namespace:
+    default_downloads_dir = DEFAULT_REPO_SCREENSHOTS_DIR if DEFAULT_REPO_SCREENSHOTS_DIR.exists() else DEFAULT_LOCAL_DOWNLOADS_DIR
     parser = argparse.ArgumentParser(description="Run local detector regression checks against confirmed screenshots.")
     parser.add_argument(
         "--downloads-dir",
         type=Path,
-        default=Path(r"C:\Users\Amir\Downloads"),
-        help="Folder containing the confirmed local screenshots.",
+        default=default_downloads_dir,
+        help="Folder containing confirmed regression screenshots. Defaults to repo fixtures when present.",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON output.")
     return parser.parse_args()

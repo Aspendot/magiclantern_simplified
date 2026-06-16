@@ -137,9 +137,11 @@ The importer maps corrected display names or stable weapon IDs through `assets/w
 assets/training/real_weapon_crops/<weapon_id>/feedback_<feedback_id>_slotN.png
 ```
 
+Only slots listed in the feedback record's `changedSlots` are imported by default. This avoids poisoning the classifier with labels for slots the user did not explicitly correct. Use `--all-slots` only for manually audited records where all four labels are confirmed.
+
 No deterministic per-screenshot rule is added. The corrected examples only influence the detector by becoming additional labeled real-crop training data for the CNN classifier.
 
-GitHub Actions workflow `.github/workflows/salmonmetrics-feedback-train.yml` can run this loop on a schedule or manually. Configure repository secret `WEAPON_FEEDBACK_EXPORT_TOKEN` to the same value used by the Pages feedback export endpoint. When the workflow produces model/training changes, it commits them to `dev`; the existing Cloud Run auto-deploy path then publishes the new detector.
+GitHub Actions workflow `.github/workflows/salmonmetrics-feedback-train.yml` can run this loop on a schedule or manually. Configure repository secret `WEAPON_FEEDBACK_EXPORT_TOKEN` to the same value used by the Pages feedback export endpoint. When the workflow produces model/training changes, it commits them to `dev`; the existing Cloud Run auto-deploy path then publishes the new detector. The regression gate uses repo-local screenshots in `assets/regression_screenshots/`, so CI does not depend on `C:\Users\Amir\Downloads`.
 
 ## Assets
 

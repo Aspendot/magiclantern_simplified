@@ -2626,9 +2626,13 @@ function applyWeaponCorrection(slot, weaponName) {
   if (!result || !Number.isInteger(slot) || !weaponName) return;
   const weapons = Array.isArray(result.weapons) ? [...result.weapons] : [];
   while (weapons.length < 4) weapons.push("");
+  if (!Array.isArray(result.detectedWeaponsBeforeCorrection) || result.detectedWeaponsBeforeCorrection.length !== 4) {
+    result.detectedWeaponsBeforeCorrection = weapons.slice(0, 4);
+    result.detectedWeaponSource = result.weaponSource || "";
+  }
   const previous = weapons[slot] || "";
   if (previous === weaponName) return;
-  const detectedWeapons = weapons.slice(0, 4);
+  const detectedWeapons = result.detectedWeaponsBeforeCorrection.slice(0, 4);
   const correctedWeapons = weapons.slice(0, 4);
   correctedWeapons[slot] = weaponName;
   recordWeaponCorrection(result, slot, previous, weaponName, correctedWeapons, detectedWeapons);
@@ -2649,7 +2653,7 @@ function recordWeaponCorrection(result, slot, previous, corrected, correctedWeap
     corrected,
     correctedWeapons: correctedWeapons.slice(0, 4),
     detectedWeapons: detectedWeapons.slice(0, 4),
-    source: result.weaponSource || "",
+    source: result.detectedWeaponSource || result.weaponSource || "",
     stage: result.stage || "",
     stampedAt: result.stampedAt || "",
     mode: result.mode || "",
