@@ -215,9 +215,16 @@ def _augment_real_crop(crop: RealCropImage, rng: np.random.Generator) -> np.ndar
     source = np.clip(source.astype(np.float32) * rng.uniform(0.78, 1.28) + rng.uniform(-18, 18), 0, 255).astype(np.uint8)
     if rng.random() < 0.28:
         source = cv2.GaussianBlur(source, (3, 3), rng.uniform(0.12, 0.75))
+    if rng.random() < 0.42:
+        h0, w0 = source.shape[:2]
+        detail_scale = rng.uniform(0.42, 0.82)
+        low_w = max(6, int(w0 * detail_scale))
+        low_h = max(6, int(h0 * detail_scale))
+        source = cv2.resize(source, (low_w, low_h), interpolation=cv2.INTER_AREA)
+        source = cv2.resize(source, (w0, h0), interpolation=cv2.INTER_LINEAR)
 
     h, w = source.shape[:2]
-    target = rng.uniform(42, 62)
+    target = rng.uniform(30, 62)
     scale = target / max(h, w) * rng.uniform(0.88, 1.14)
     new_w = max(6, min(IMAGE_SIZE, int(w * scale)))
     new_h = max(6, min(IMAGE_SIZE, int(h * scale)))

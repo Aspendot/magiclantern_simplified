@@ -15,7 +15,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.8"
+SERVICE_VERSION = "0.2.9"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -364,7 +364,10 @@ class WeaponDetector:
             boxes.append((area, x, y, w, h))
 
         if boxes:
-            _, x, y, w, h = max(boxes, key=lambda item: item[0])
+            _, x, y, w, h = max(
+                boxes,
+                key=lambda item: item[0] * (1.0 - min(0.72, item[2] / max(1.0, region_h * 0.58))),
+            )
             row_counts = np.count_nonzero(raw_dark_mask[:, x : x + w], axis=1)
             covered_rows = np.flatnonzero(row_counts >= w * 0.42)
             covered_rows = covered_rows[(covered_rows >= y) & (covered_rows < y + h)]
@@ -649,44 +652,63 @@ class WeaponDetector:
         if self.classifier_net is None or not self.classifier_labels:
             return []
 
-        boxes = self._weapon_component_boxes(region)
-        if len(boxes) != 4:
-            return []
-
         by_id = {template.info.weapon_id: template for template in self.templates}
-        selected: list[MatchCandidate] = []
-        for x, y, w, h in boxes:
-            crop = self._crop_component(region, x, y, w, h)
-            if crop is None:
-                return []
-            prediction = self._classify_component_crop(crop)
-            if prediction is None:
-                return []
-            weapon_id, probability, margin = prediction
-            template = by_id.get(weapon_id)
-            if template is None:
-                return []
-            if probability < 0.64:
-                return []
-            if probability < 0.72 and margin < 0.35:
-                return []
-            if margin < 0.16:
-                return []
-            selected.append(
-                MatchCandidate(
-                    template=template,
-                    score=min(0.999, probability),
-                    x=x + offset[0],
-                    y=y + offset[1],
-                    w=w,
-                    h=h,
-                    region_name=region_name,
-                    region_offset=offset,
-                    method="cnn_real_crop_classifier",
-                )
-            )
 
-        return sorted(selected, key=lambda item: item.center[0])
+        for boxes in self._weapon_component_box_groups(region):
+            selected: list[MatchCandidate] = []
+            seen_weapon_ids: set[str] = set()
+
+            for x, y, w, h in boxes:
+                crop = self._crop_component(region, x, y, w, h)
+                if crop is None:
+                    selected = []
+                    break
+                prediction = self._classify_component_crop(crop)
+                if prediction is None:
+                    selected = []
+                    break
+                weapon_id, probability, margin = prediction
+                template = by_id.get(weapon_id)
+                if template is None or weapon_id in seen_weapon_ids:
+                    selected = []
+                    break
+                if not self._component_prediction_is_usable(probability, margin):
+                    selected = []
+                    break
+                seen_weapon_ids.add(weapon_id)
+                score = self._component_prediction_score(probability, margin)
+                selected.append(
+                    MatchCandidate(
+                        template=template,
+                        score=score,
+                        x=x + offset[0],
+                        y=y + offset[1],
+                        w=w,
+                        h=h,
+                        region_name=region_name,
+                        region_offset=offset,
+                        method="cnn_real_crop_classifier",
+                    )
+                )
+
+            if len(selected) == 4:
+                return sorted(selected, key=lambda item: item.center[0])
+
+        return []
+
+    @staticmethod
+    def _component_prediction_is_usable(probability: float, margin: float) -> bool:
+        if probability < 0.40:
+            return False
+        if probability < 0.64 and margin < 0.22:
+            return False
+        if probability < 0.72 and margin < 0.18:
+            return False
+        return margin >= 0.12
+
+    @staticmethod
+    def _component_prediction_score(probability: float, margin: float) -> float:
+        return min(0.999, max(probability, 0.68 + margin * 0.28))
 
     def _classify_component_crop(self, crop: np.ndarray) -> tuple[str, float, float] | None:
         if self.classifier_net is None:
@@ -735,51 +757,114 @@ class WeaponDetector:
         return region[y0:y1, x0:x1]
 
     def _weapon_component_boxes(self, region: np.ndarray) -> list[tuple[int, int, int, int]]:
-        foreground = self._pill_foreground_mask(region)
-        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
-        foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
-        contours, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        groups = self._weapon_component_box_groups(region)
+        return groups[0] if groups else []
+
+    def _weapon_component_box_groups(self, region: np.ndarray) -> list[list[tuple[int, int, int, int]]]:
+        foreground = self._component_foreground_mask(region)
 
         region_h, region_w = region.shape[:2]
         boxes: list[tuple[int, int, int, int, int]] = []
-        min_pixels = max(70, int(region_h * region_w * 0.0035))
+        contours, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        min_pixels = max(24, int(region_h * region_w * 0.0020))
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
             pixels = int(cv2.countNonZero(foreground[y : y + h, x : x + w]))
             if pixels < min_pixels:
                 continue
-            if w < 8 or h < 8:
+            if w < 5 or h < 6:
                 continue
-            if w > region_w * 0.85 and h > region_h * 0.55:
+            if w > region_w * 0.72 and h > region_h * 0.20:
                 continue
             if h > region_h * 0.96:
                 continue
-            if y > region_h * 0.78:
+            if y > region_h * 0.82:
                 continue
             boxes.append((x, y, w, h, pixels))
 
+        boxes = self._split_wide_component_boxes(foreground, boxes)
         if len(boxes) < 4:
             return []
-        boxes = sorted(boxes, key=lambda item: item[4], reverse=True)[:8]
-        best: tuple[float, tuple[tuple[int, int, int, int, int], ...]] | None = None
+
+        boxes = sorted(boxes, key=lambda item: item[4], reverse=True)[:10]
+        ranked_groups: list[tuple[float, tuple[tuple[int, int, int, int, int], ...]]] = []
         for combo in combinations(boxes, 4):
             ordered = tuple(sorted(combo, key=lambda item: item[0] + item[2] / 2))
             centers = [item[0] + item[2] / 2 for item in ordered]
             gaps = [right - left for left, right in zip(centers, centers[1:])]
-            if min(gaps) < max(14.0, float(np.median([item[2] for item in ordered])) * 0.55):
+            median_w = float(np.median([item[2] for item in ordered]))
+            median_h = float(np.median([item[3] for item in ordered]))
+            if min(gaps) < max(9.0, median_w * 0.34):
+                continue
+            if max(gaps) > max(72.0, float(np.mean(gaps)) * 2.35):
                 continue
             y_spread = max(item[1] + item[3] / 2 for item in ordered) - min(item[1] + item[3] / 2 for item in ordered)
-            if y_spread > max(28.0, float(np.median([item[3] for item in ordered])) * 1.25):
+            if y_spread > max(32.0, median_h * 2.0, region_h * 0.70):
+                continue
+            span = centers[-1] - centers[0]
+            if span < region_w * 0.34:
                 continue
             gap_cv = float(np.std(gaps) / max(1.0, np.mean(gaps)))
             area_score = float(sum(item[4] for item in ordered))
-            score = area_score - gap_cv * 500
-            if best is None or score > best[0]:
-                best = (score, ordered)
+            edge_penalty = 850.0 if ordered[0][0] <= 1 else 0.0
+            score = area_score + min(120.0, span / max(1.0, region_w) * 160.0) - gap_cv * 500.0 - edge_penalty
+            ranked_groups.append((score, ordered))
 
-        if best is None:
-            return []
-        return [(x, y, w, h) for x, y, w, h, _ in best[1]]
+        ranked_groups.sort(key=lambda item: item[0], reverse=True)
+        return [[(x, y, w, h) for x, y, w, h, _ in group] for _, group in ranked_groups[:12]]
+
+    def _component_foreground_mask(self, region: np.ndarray) -> np.ndarray:
+        foreground = self._pill_foreground_mask(region).copy()
+        region_h, region_w = foreground.shape[:2]
+        row_counts = np.count_nonzero(foreground, axis=1)
+        dense_rows = row_counts > region_w * 0.62
+        if region_h >= 32 and int(np.count_nonzero(dense_rows)) < region_h * 0.72:
+            foreground[dense_rows, :] = 0
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, np.ones((2, 2), dtype=np.uint8))
+        return foreground
+
+    @staticmethod
+    def _split_wide_component_boxes(
+        foreground: np.ndarray, boxes: list[tuple[int, int, int, int, int]]
+    ) -> list[tuple[int, int, int, int, int]]:
+        if len(boxes) < 3:
+            return boxes
+        region_w = foreground.shape[1]
+        widths = [box[2] for box in boxes]
+        split_threshold = max(36.0, float(np.median(widths)) * 1.55, region_w * 0.24)
+        output: list[tuple[int, int, int, int, int]] = []
+        for x, y, w, h, pixels in boxes:
+            if w <= split_threshold:
+                output.append((x, y, w, h, pixels))
+                continue
+
+            local = foreground[y : y + h, x : x + w]
+            column_counts = np.count_nonzero(local, axis=0).astype(np.float32)
+            if len(column_counts) >= 5:
+                column_counts = np.convolve(column_counts, np.ones(5, dtype=np.float32) / 5, mode="same")
+            left_limit = int(w * 0.30)
+            right_limit = int(w * 0.70)
+            if right_limit <= left_limit:
+                output.append((x, y, w, h, pixels))
+                continue
+            split_x = left_limit + int(np.argmin(column_counts[left_limit:right_limit]))
+            if split_x < 5 or w - split_x < 5:
+                output.append((x, y, w, h, pixels))
+                continue
+
+            pieces: list[tuple[int, int, int, int, int]] = []
+            for local_x0, local_x1 in ((0, split_x), (split_x, w)):
+                piece = local[:, local_x0:local_x1]
+                points = cv2.findNonZero(piece)
+                if points is None:
+                    continue
+                px, py, pw, ph = cv2.boundingRect(points)
+                piece_pixels = int(cv2.countNonZero(piece[py : py + ph, px : px + pw]))
+                if pw >= 5 and ph >= 6 and piece_pixels >= max(12, pixels * 0.12):
+                    pieces.append((x + local_x0 + px, y + py, pw, ph, piece_pixels))
+            output.extend(pieces if len(pieces) == 2 else [(x, y, w, h, pixels)])
+        return output
 
     def _match_weapon_pill_even_slots(
         self, region_name: str, region: np.ndarray, offset: tuple[int, int]
@@ -1217,8 +1302,10 @@ class WeaponDetector:
         gaps = [right - left for left, right in zip(centers_x, centers_x[1:])]
         y_spread = max(centers_y) - min(centers_y)
 
+        min_gap_threshold = max(12.0, median_w * 0.50) if method == "cnn_real_crop_classifier" else max(18.0, median_w * 0.85)
+
         # Must be four separate horizontal objects.
-        if min(gaps) < max(18.0, median_w * 0.85):
+        if min(gaps) < min_gap_threshold:
             return False
 
         # Must be on the same visual row.
