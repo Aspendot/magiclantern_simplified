@@ -407,12 +407,13 @@ export async function onRequestPost({ request, env }) {
     }
 
     const models = configuredModels(env);
-    // Weapons are deterministic from the screenshot's printed play timestamp + the
-    // public Salmon Run schedule, so prefetch the schedule in parallel with Gemini
-    // instead of blocking on the slow Cloud Run icon detector. The detector is only
-    // consulted as a fallback (resolveDeterministicWeapons) when the schedule misses.
+    // Resolve deterministic sources in parallel with Gemini so correctness does not
+    // depend on VLM weapon naming for old/out-of-window screenshots. The server-side
+    // detector is trusted only after localWeaponHintFor() accepts its confidence and
+    // geometry; client/browser hints are deliberately not accepted here.
     const schedulePromise = fetchCoopSchedule(env).catch(() => null);
-    const weaponContext = { schedulePromise };
+    const detectorPromise = detectWeaponsWithService(images.full, env).catch(() => null);
+    const weaponContext = { schedulePromise, detectorPromise };
     const extraction = await extractWithGemini({ apiKey, models, images, weaponContext, debug });
     return jsonResponse(extraction);
   } catch (error) {
@@ -823,7 +824,19 @@ async function resolveDeterministicWeapons(result, context = null) {
     return;
   }
 
-  // 3) Otherwise trust Gemini's own read. Its weapon output is constrained to
+  // 3) Server-side image detector. This covers old screenshots outside the public
+  //    current schedule window and avoids trusting browser-provided hints.
+  const detected = localWeaponHintFor(context?.detectorPromise ? await context.detectorPromise : null);
+  if (detected?.mode === "random_weapons") {
+    applyResolvedWeapons(result, detected.weapons, "random");
+    return;
+  }
+  if (detected?.weapons?.length === 4) {
+    applyResolvedWeapons(result, detected.weapons, "local_match");
+    return;
+  }
+
+  // 4) Otherwise trust Gemini's own read. Its weapon output is constrained to
   //    the known weapon list and it sees a dedicated upscaled crop of the supply
   //    bar, so it is the recognizer for stamp-less / out-of-window screenshots.
   //    Tiny or cropped icons can't always be pinned from pixels, so a partial
