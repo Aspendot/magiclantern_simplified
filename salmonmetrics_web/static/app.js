@@ -7,10 +7,6 @@ const STORAGE_WEAPON_CORRECTIONS = "salmonmetrics.weaponCorrections";
 const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json";
 const WEAPON_FUZZY_MARGIN = 0.055;
 const WEAPON_FUZZY_MIN_SCORE = 0.82;
-const LOCAL_WEAPON_MATCH_SIZE = 42;
-const LOCAL_WEAPON_ACCEPT_SCORE = 0.68;
-const LOCAL_WEAPON_ACCEPT_AVG = 0.74;
-const LOCAL_WEAPON_ACCEPT_GAP = 0.018;
 const GEMINI_MODEL_LABELS = new Map([
   ["gemini-3.5-flash", "Gemini 3.5 Flash"],
   ["gemini-3-flash-preview", "Gemini 3 Flash"],
@@ -152,7 +148,6 @@ const state = {
   weaponLookup: new Map(),
   weaponCandidates: [],
   weaponManifest: [],
-  weaponTemplates: [],
   lastOcrImages: null,
   lastFeedbackSubmission: null,
 };
@@ -255,7 +250,9 @@ async function init() {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  navigator.serviceWorker.register("/sw.js").then((registration) => {
+    registration.update().catch(() => {});
+  }).catch(() => {});
 }
 
 async function loadWeaponIcons() {
@@ -273,14 +270,12 @@ async function loadWeaponIcons() {
       }
     }
     state.weaponManifest = Array.isArray(manifest.weapons) ? manifest.weapons : [];
-    state.weaponTemplates = [];
     state.weaponLookup = lookup;
     state.weaponCandidates = candidates;
   } catch {
     state.weaponLookup = new Map();
     state.weaponCandidates = [];
     state.weaponManifest = [];
-    state.weaponTemplates = [];
   }
 }
 
@@ -1841,312 +1836,6 @@ function cropImageRegion(image, region) {
   context.filter = "contrast(1.28) saturate(1.04)";
   context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   return { label: region.label, dataUrl: canvas.toDataURL("image/jpeg", 0.96) };
-}
-
-async function recognizeLocalWeaponStrip(dataUrl) {
-  if (!dataUrl) return null;
-  const templates = await loadWeaponTemplates();
-  if (!templates.length) return null;
-  const image = await loadCanvasImage(dataUrl);
-  const source = imageToCanvas(image);
-  const strip = cropCanvasFraction(source, 0.05, 0.31, 0.62, 0.43);
-  if (isRandomWeaponStrip(strip)) {
-    return {
-      source: "local_template_match",
-      mode: "random_weapons",
-      confidence: 1,
-      needsReview: false,
-      weapons: [1, 2, 3, 4].map((slot) => ({
-        slot,
-        weaponName: "ランダム",
-        confidence: 1,
-        method: "random_marker",
-      })),
-    };
-  }
-
-  const slots = cropWeaponSlots(strip);
-  const weapons = slots.map((slotCanvas, index) => matchWeaponSlot(slotCanvas, templates, index + 1));
-  const average = weapons.reduce((sum, item) => sum + item.confidence, 0) / Math.max(1, weapons.length);
-  const needsReview = weapons.length !== 4
-    || average < LOCAL_WEAPON_ACCEPT_AVG
-    || weapons.some((item) => !item.weaponName || item.confidence < LOCAL_WEAPON_ACCEPT_SCORE || item.gap < LOCAL_WEAPON_ACCEPT_GAP);
-  return {
-    source: "local_template_match",
-    mode: "fixed_weapons",
-    confidence: roundConfidence(average),
-    needsReview,
-    weapons,
-  };
-}
-
-async function loadWeaponTemplates() {
-  if (state.weaponTemplates.length) return state.weaponTemplates;
-  const weapons = Array.isArray(state.weaponManifest) ? state.weaponManifest : [];
-  const templates = [];
-  for (const weapon of weapons) {
-    if (!weapon?.icon || !weapon?.nameJa) continue;
-    try {
-      const image = await loadCanvasImage(weapon.icon);
-      templates.push({
-        weapon,
-        signature: signatureFromImage(image, true),
-      });
-    } catch {
-      // Ignore one broken icon; the remaining templates are still useful.
-    }
-  }
-  state.weaponTemplates = templates;
-  return state.weaponTemplates;
-}
-
-function loadCanvasImage(src) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.decoding = "async";
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("画像を読み込めませんでした"));
-    image.src = src;
-  });
-}
-
-function imageToCanvas(image) {
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, image.naturalWidth || image.width);
-  canvas.height = Math.max(1, image.naturalHeight || image.height);
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas;
-}
-
-function cropCanvasFraction(source, x, y, width, height) {
-  const sx = Math.round(source.width * x);
-  const sy = Math.round(source.height * y);
-  const sw = Math.max(1, Math.round(source.width * width));
-  const sh = Math.max(1, Math.round(source.height * height));
-  return cropCanvas(source, sx, sy, sw, sh);
-}
-
-function cropCanvas(source, sx, sy, sw, sh) {
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, sw);
-  canvas.height = Math.max(1, sh);
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  context.drawImage(source, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  return canvas;
-}
-
-function isRandomWeaponStrip(canvas) {
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-  let foreground = 0;
-  let randomGreen = 0;
-  for (let index = 0; index < data.length; index += 4) {
-    const r = data[index];
-    const g = data[index + 1];
-    const b = data[index + 2];
-    const weight = screenshotForegroundWeight(r, g, b, data[index + 3]);
-    if (weight <= 0) continue;
-    foreground += 1;
-    if (g > 145 && r < 105 && b < 130 && g - r > 55 && g - b > 45) {
-      randomGreen += 1;
-    }
-  }
-  return foreground > 0 && randomGreen > canvas.width * canvas.height * 0.025 && randomGreen / foreground > 0.42;
-}
-
-function cropWeaponSlots(strip) {
-  const centers = detectWeaponCenters(strip);
-  const slotSize = Math.round(Math.min(strip.height * 0.96, strip.width * 0.23));
-  return centers.slice(0, 4).map((center) => {
-    const sx = Math.max(0, Math.round(center - slotSize / 2));
-    const sy = Math.max(0, Math.round((strip.height - slotSize) / 2));
-    const sw = Math.min(slotSize, strip.width - sx);
-    const sh = Math.min(slotSize, strip.height - sy);
-    return cropCanvas(strip, sx, sy, sw, sh);
-  });
-}
-
-function detectWeaponCenters(canvas) {
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-  const columns = new Array(canvas.width).fill(0);
-  for (let y = 0; y < canvas.height; y += 1) {
-    for (let x = 0; x < canvas.width; x += 1) {
-      const index = (y * canvas.width + x) * 4;
-      columns[x] += screenshotForegroundWeight(data[index], data[index + 1], data[index + 2], data[index + 3]);
-    }
-  }
-  const threshold = Math.max(1.6, canvas.height * 0.055);
-  const maxGap = Math.max(3, Math.round(canvas.width * 0.025));
-  const groups = [];
-  let current = null;
-  let gap = 0;
-  columns.forEach((score, x) => {
-    if (score >= threshold) {
-      if (!current) current = { start: x, end: x, weight: 0, weightedX: 0 };
-      current.end = x;
-      current.weight += score;
-      current.weightedX += score * x;
-      gap = 0;
-    } else if (current) {
-      gap += 1;
-      if (gap <= maxGap) {
-        current.end = x;
-      } else {
-        groups.push(current);
-        current = null;
-        gap = 0;
-      }
-    }
-  });
-  if (current) groups.push(current);
-  const centers = groups
-    .filter((group) => group.end - group.start >= Math.max(3, canvas.width * 0.018))
-    .map((group) => group.weightedX / Math.max(1, group.weight))
-    .filter((center) => Number.isFinite(center));
-  if (centers.length === 4) return centers;
-  if (centers.length > 4) return centers.slice(0, 4);
-  return [0.17, 0.39, 0.61, 0.83].map((ratio) => canvas.width * ratio);
-}
-
-function matchWeaponSlot(slotCanvas, templates, slot) {
-  const signature = signatureFromImage(slotCanvas, false);
-  const matches = templates
-    .map((template) => ({
-      weapon: template.weapon,
-      score: compareWeaponSignatures(signature, template.signature),
-    }))
-    .sort((a, b) => b.score - a.score);
-  const best = matches[0];
-  const second = matches[1];
-  const gap = best && second ? best.score - second.score : 0;
-  return {
-    slot,
-    weaponName: best?.weapon?.nameJa || "",
-    confidence: roundConfidence(best?.score || 0),
-    gap: roundConfidence(gap),
-    method: "template_match",
-    candidates: matches.slice(0, 3).map((match) => ({
-      weaponName: match.weapon.nameJa,
-      confidence: roundConfidence(match.score),
-    })),
-  };
-}
-
-function signatureFromImage(source, transparentTemplate) {
-  const canvas = source instanceof HTMLCanvasElement ? source : imageToCanvas(source);
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  const image = context.getImageData(0, 0, canvas.width, canvas.height);
-  const bounds = foregroundBounds(image, canvas.width, canvas.height, transparentTemplate);
-  const normalized = document.createElement("canvas");
-  normalized.width = LOCAL_WEAPON_MATCH_SIZE;
-  normalized.height = LOCAL_WEAPON_MATCH_SIZE;
-  const target = normalized.getContext("2d", { willReadFrequently: true });
-  target.clearRect(0, 0, normalized.width, normalized.height);
-  if (bounds) {
-    const sourceSize = Math.max(bounds.width, bounds.height);
-    const padding = 3;
-    const targetSize = LOCAL_WEAPON_MATCH_SIZE - padding * 2;
-    const dx = padding + (targetSize - (bounds.width / sourceSize) * targetSize) / 2;
-    const dy = padding + (targetSize - (bounds.height / sourceSize) * targetSize) / 2;
-    target.drawImage(
-      canvas,
-      bounds.x,
-      bounds.y,
-      bounds.width,
-      bounds.height,
-      dx,
-      dy,
-      (bounds.width / sourceSize) * targetSize,
-      (bounds.height / sourceSize) * targetSize,
-    );
-  } else {
-    target.drawImage(canvas, 0, 0, LOCAL_WEAPON_MATCH_SIZE, LOCAL_WEAPON_MATCH_SIZE);
-  }
-  const normalizedImage = target.getImageData(0, 0, LOCAL_WEAPON_MATCH_SIZE, LOCAL_WEAPON_MATCH_SIZE);
-  const mask = [];
-  const colors = [];
-  for (let index = 0; index < normalizedImage.data.length; index += 4) {
-    const r = normalizedImage.data[index];
-    const g = normalizedImage.data[index + 1];
-    const b = normalizedImage.data[index + 2];
-    const a = normalizedImage.data[index + 3];
-    const weight = transparentTemplate ? (a > 22 ? 1 : 0) : screenshotForegroundWeight(r, g, b, a);
-    mask.push(weight);
-    colors.push([r, g, b]);
-  }
-  return { mask, colors };
-}
-
-function foregroundBounds(image, width, height, transparentTemplate) {
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = (y * width + x) * 4;
-      const r = image.data[index];
-      const g = image.data[index + 1];
-      const b = image.data[index + 2];
-      const a = image.data[index + 3];
-      const weight = transparentTemplate ? (a > 22 ? 1 : 0) : screenshotForegroundWeight(r, g, b, a);
-      if (weight <= 0) continue;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-  }
-  if (maxX < minX || maxY < minY) return null;
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX + 1,
-    height: maxY - minY + 1,
-  };
-}
-
-function screenshotForegroundWeight(r, g, b, a = 255) {
-  if (a < 20) return 0;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const saturation = max ? (max - min) / max : 0;
-  if (max > 168 && saturation > 0.03) return 1;
-  if (max > 58 && saturation > 0.22) return 1;
-  return 0;
-}
-
-function compareWeaponSignatures(a, b) {
-  let intersection = 0;
-  let union = 0;
-  let colorScore = 0;
-  let colorCount = 0;
-  for (let index = 0; index < a.mask.length; index += 1) {
-    const aw = a.mask[index];
-    const bw = b.mask[index];
-    intersection += Math.min(aw, bw);
-    union += Math.max(aw, bw);
-    if (aw > 0 && bw > 0) {
-      const ac = a.colors[index];
-      const bc = b.colors[index];
-      const distance = Math.sqrt(
-        (ac[0] - bc[0]) ** 2
-        + (ac[1] - bc[1]) ** 2
-        + (ac[2] - bc[2]) ** 2,
-      );
-      colorScore += Math.max(0, 1 - distance / 442);
-      colorCount += 1;
-    }
-  }
-  const shapeScore = union ? intersection / union : 0;
-  const averageColor = colorCount ? colorScore / colorCount : 0;
-  return shapeScore * 0.72 + averageColor * 0.28;
-}
-
-function roundConfidence(value) {
-  return Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 1000) / 1000;
 }
 
 function imageFileToDataUrl(file) {
