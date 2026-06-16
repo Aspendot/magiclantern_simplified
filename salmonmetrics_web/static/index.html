@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101216" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="SalmonMetrics" />
+    <title>SalmonMetrics Web</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/salmonmetrics-icon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <img class="brand-mark" src="/salmonmetrics-icon.svg" alt="" />
+          <div>
+            <p class="eyebrow">RELEASE 1.0.0</p>
+            <h1>SalmonMetrics</h1>
+          </div>
+        </div>
+        <button class="icon-button" type="button" id="refreshButton" aria-label="Refresh logs" title="Refresh logs">↻</button>
+      </header>
+
+      <section class="shift-card" aria-live="polite">
+        <div class="shift-card-main">
+          <span class="sync-pill" id="syncStatus">起動中</span>
+          <div>
+            <span class="label">現在のシフト</span>
+            <strong id="shiftStatus">--</strong>
+          </div>
+          <div>
+            <span class="label">残り時間</span>
+            <strong id="remainingTime">--</strong>
+          </div>
+        </div>
+        <div class="shift-weapon-strip" id="shiftWeaponStrip"></div>
+      </section>
+
+      <section class="operator-panel">
+        <label class="field user-field">
+          <span>プレイヤー</span>
+          <input id="operatorName" list="knownUsers" autocomplete="name" placeholder="ユーザー名" />
+        </label>
+        <datalist id="knownUsers"></datalist>
+        <label class="field">
+          <span>集計対象</span>
+          <select id="analyticsUser">
+            <option value="すべて">すべて</option>
+          </select>
+        </label>
+      </section>
+
+      <nav class="segmented" aria-label="Main views">
+        <button class="active" type="button" data-view="ocr">読取</button>
+        <button type="button" data-view="standard">通常</button>
+        <button type="button" data-view="contest">コンテスト</button>
+        <button type="button" data-view="analytics">集計</button>
+        <button type="button" data-view="shift">シフト</button>
+      </nav>
+
+      <section class="view" id="standardView" data-view-panel="standard">
+        <form id="standardForm" class="entry-form" autocomplete="off">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">ENTRY</p>
+              <h2>通常記録</h2>
+            </div>
+            <div class="stage-pill" id="standardStage">--</div>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>全体の納品数</span>
+              <input name="totalEggs" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>自分の納品数</span>
+              <input name="myEggs" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid four">
+            <label class="field">
+              <span>自分の処理数</span>
+              <input name="myKills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>2P処理数</span>
+              <input name="p2Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>3P処理数</span>
+              <input name="p3Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>4P処理数</span>
+              <input name="p4Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>全体赤イクラ</span>
+              <input name="totalRed" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>個人赤イクラ</span>
+              <input name="myRed" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>プレイスタイル</span>
+              <select name="playStyle">
+                <option value="野良">野良</option>
+                <option value="タッグ">タッグ</option>
+                <option value="フルパ">フルパ</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>打刻時刻</span>
+              <input name="stampedAt" type="datetime-local" />
+            </label>
+          </div>
+
+          <fieldset class="choice-field">
+            <legend>記録条件</legend>
+            <div class="choice-row">
+              <label class="choice-card">
+                <input name="dayNight" type="radio" value="昼のみ" checked />
+                <strong>昼のみ</strong>
+                <span>通常Wのみ</span>
+              </label>
+              <label class="choice-card">
+                <input name="dayNight" type="radio" value="夜あり" />
+                <strong>夜あり</strong>
+                <span>夜W/ボーナス含む</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <label class="field">
+            <span>備考</span>
+            <textarea name="notes" rows="2" placeholder="メモ"></textarea>
+          </label>
+
+          <div class="metric-preview" id="standardPreview"></div>
+          <button class="primary-action" type="submit">記録を送信</button>
+        </form>
+      </section>
+
+      <section class="view active" id="ocrView" data-view-panel="ocr">
+        <form id="ocrForm" class="entry-form import-form" autocomplete="off">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">GEMINI VLM</p>
+              <h2>スクショ読取</h2>
+              <p class="scope-line">画像から読める項目をGeminiで自動入力します</p>
+            </div>
+            <label class="ocr-upload">
+              <input id="ocrImageInput" type="file" accept="image/*" />
+              <span>画像を選択</span>
+            </label>
+          </div>
+
+          <div class="ocr-workflow">
+            <div class="ocr-dropcopy">
+              <strong id="ocrStatus">画像未選択</strong>
+              <span id="ocrEngine">Gemini VLMのみ・自動再試行</span>
+            </div>
+            <button id="ocrClearButton" class="secondary-action" type="button" hidden>クリア</button>
+          </div>
+
+          <div class="ocr-result" id="ocrResult" hidden></div>
+
+          <div class="form-grid three">
+            <label class="field">
+              <span>記録種別</span>
+              <select name="mode" id="ocrMode">
+                <option value="STANDARD">通常</option>
+                <option value="CONTEST">コンテスト</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>プレイスタイル（手動）</span>
+              <select name="playStyle">
+                <option value="">選択してください</option>
+                <option value="野良">野良</option>
+                <option value="タッグ">タッグ</option>
+                <option value="フルパ">フルパ</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>打刻時刻</span>
+              <input name="stampedAt" type="datetime-local" />
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>ステージ</span>
+              <select name="stage" id="ocrStageSelect">
+                <option value="">未選択</option>
+                <option>アラマキ砦</option>
+                <option>シェケナダム</option>
+                <option>ムニ・エール海洋発電所</option>
+                <option>難破船ドン・ブラコ</option>
+                <option>すじこジャンクション跡</option>
+                <option>トキシラズいぶし工房</option>
+                <option>どんぴこ闘技場</option>
+                <option>ビッグラン</option>
+              </select>
+            </label>
+            <label class="field ocr-contest-only" hidden>
+              <span>開催回</span>
+              <select name="round" id="ocrRound"></select>
+            </label>
+            <label class="field">
+              <span>記録条件</span>
+              <select name="dayNight" id="ocrDayNight">
+                <option value="昼のみ">昼のみ</option>
+                <option value="夜あり">夜あり</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>全体の納品数</span>
+              <input name="totalEggs" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>自分の納品数</span>
+              <input name="myEggs" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid four">
+            <label class="field">
+              <span>自分の処理数</span>
+              <input name="myKills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>2P処理数</span>
+              <input name="p2Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>3P処理数</span>
+              <input name="p3Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>4P処理数</span>
+              <input name="p4Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>全体赤イクラ</span>
+              <input name="totalRed" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>個人赤イクラ</span>
+              <input name="myRed" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid five ocr-contest-only" hidden>
+            <label class="field">
+              <span>W1</span>
+              <input name="w1" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W2</span>
+              <input name="w2" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W3</span>
+              <input name="w3" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W4</span>
+              <input name="w4" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W5</span>
+              <input name="w5" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>備考</span>
+            <textarea name="notes" rows="2" placeholder="VLMメモ"></textarea>
+          </label>
+
+          <div class="metric-preview" id="ocrPreview"></div>
+          <div class="action-row">
+            <button id="ocrApplyButton" class="secondary-action" type="button">フォームへ反映</button>
+            <button class="primary-action" type="submit">確認して送信</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="view" id="contestView" data-view-panel="contest">
+        <form id="contestForm" class="entry-form" autocomplete="off">
+          <input name="stage" type="hidden" />
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">CONTEST</p>
+              <h2>バイトチームコンテスト</h2>
+            </div>
+            <div class="contest-controls">
+              <label class="compact-select">
+                <span>開催回</span>
+                <select name="round" id="contestRound"></select>
+              </label>
+              <label class="compact-select">
+                <span>打刻時刻</span>
+                <input name="stampedAt" type="datetime-local" />
+              </label>
+            </div>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>全体の納品数</span>
+              <input name="totalEggs" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>自分の納品数</span>
+              <input name="myEggs" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid four">
+            <label class="field">
+              <span>自分の処理数</span>
+              <input name="myKills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>2P処理数</span>
+              <input name="p2Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>3P処理数</span>
+              <input name="p3Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>4P処理数</span>
+              <input name="p4Kills" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>全体赤イクラ</span>
+              <input name="totalRed" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>個人赤イクラ</span>
+              <input name="myRed" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <div class="form-grid five">
+            <label class="field">
+              <span>W1</span>
+              <input name="w1" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W2</span>
+              <input name="w2" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W3</span>
+              <input name="w3" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W4</span>
+              <input name="w4" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>W5</span>
+              <input name="w5" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>備考</span>
+            <textarea name="notes" rows="2" placeholder="メモ"></textarea>
+          </label>
+
+          <div class="metric-preview" id="contestPreview"></div>
+          <button class="primary-action purple" type="submit">記録を送信</button>
+        </form>
+      </section>
+
+      <section class="view" id="analyticsView" data-view-panel="analytics">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">STATS</p>
+            <h2>集計</h2>
+            <p class="scope-line" id="analyticsScope">全員の記録</p>
+          </div>
+          <select id="contestRoundFilter" class="standalone-select">
+            <option value="ALL">ALL</option>
+          </select>
+        </div>
+
+        <div class="stat-grid" id="statGrid"></div>
+
+        <section class="panel stage-panel">
+          <div class="panel-head">
+            <h3>ステージ別 納品数</h3>
+            <span id="stageSummaryCount">0</span>
+          </div>
+          <div class="stage-summary-list" id="stageSummaryList"></div>
+        </section>
+
+        <section class="split-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>最近の通常記録</h3>
+              <span id="standardCount">0</span>
+            </div>
+            <div class="record-list" id="recentStandard"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h3>コンテスト順位</h3>
+              <span id="contestCount">0</span>
+            </div>
+            <div class="record-list" id="contestRanking"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="shiftView" data-view-panel="shift">
+        <form id="shiftForm" class="entry-form" autocomplete="off">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">SHIFT</p>
+              <h2>シフト設定</h2>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>ステージ</span>
+            <select name="stage" id="stageSelect">
+              <option>アラマキ砦</option>
+              <option>シェケナダム</option>
+              <option>ムニ・エール海洋発電所</option>
+              <option>難破船ドン・ブラコ</option>
+              <option>すじこジャンクション跡</option>
+              <option>トキシラズいぶし工房</option>
+              <option>どんぴこ闘技場</option>
+              <option>ビッグラン</option>
+            </select>
+          </label>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>開始</span>
+              <input name="startTime" type="datetime-local" />
+            </label>
+            <label class="field">
+              <span>終了</span>
+              <input name="endTime" type="datetime-local" />
+            </label>
+          </div>
+
+          <div class="form-grid four">
+            <label class="field">
+              <span>ブキ 1</span>
+              <input name="weapon1" placeholder="-" />
+            </label>
+            <label class="field">
+              <span>ブキ 2</span>
+              <input name="weapon2" placeholder="-" />
+            </label>
+            <label class="field">
+              <span>ブキ 3</span>
+              <input name="weapon3" placeholder="-" />
+            </label>
+            <label class="field">
+              <span>ブキ 4</span>
+              <input name="weapon4" placeholder="-" />
+            </label>
+          </div>
+
+          <div class="weapon-row" id="weaponRow"></div>
+          <button class="primary-action orange" type="submit">シフトを保存</button>
+        </form>
+
+        <div class="guide-grid">
+          <article class="guide-card">
+            <h3>Dr</h3>
+            <p>自分の納品数 / 全体の納品数</p>
+          </article>
+          <article class="guide-card">
+            <h3>BSKr</h3>
+            <p>自分の処理数 / 全体の合計処理数</p>
+          </article>
+          <article class="guide-card">
+            <h3>OKr</h3>
+            <p>個人赤イクラ / 全体赤イクラ</p>
+          </article>
+          <article class="guide-card">
+            <h3>DPK</h3>
+            <p>Dr + BSKr</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <section class="toast" id="toast" role="status" aria-live="polite"></section>
+
+    <dialog id="accessDialog">
+      <form method="dialog" id="accessForm" class="access-form">
+        <h2>Access key</h2>
+        <label class="field">
+          <span>Key</span>
+          <input id="accessToken" type="password" autocomplete="current-password" />
+        </label>
+        <button class="primary-action" type="submit">保存</button>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

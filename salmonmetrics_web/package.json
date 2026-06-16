@@ -1,0 +1,14 @@
+{
+  "name": "salmonmetrics-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check static/app.js && node --check static/sw.js && node --check functions/_lib/salmonmetrics.js && node --check functions/api/health.js && node --check functions/api/logs.js && node --check functions/api/ocr.js && node --check functions/api/submit.js && node --check functions/api/delete.js && node --check functions/api/config.js && node --check functions/api/[[path]].js",
+    "dev": "wrangler pages dev static --compatibility-date=2026-05-13",
+    "deploy": "wrangler pages deploy static --project-name salmonmetrics"
+  },
+  "devDependencies": {
+    "wrangler": "^4.16.0"
+  }
+}

@@ -1,0 +1,7 @@
+.dev.vars
+.tail.log
+.wrangler/
+.run-logs/
+node_modules/
+__pycache__/
+*.pyc

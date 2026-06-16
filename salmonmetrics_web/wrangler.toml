@@ -1,0 +1,13 @@
+name = "salmonmetrics"
+compatibility_date = "2026-05-13"
+pages_build_output_dir = "static"
+
+# Optional production variables can be configured in the Cloudflare dashboard.
+# SALMONMETRICS_SHEET_URL should point at the Google Apps Script /exec URL.
+# SALMONMETRICS_ACCESS_TOKEN can be set if you want a shared key.
+# GEMINI_API_KEY must be configured as a Pages secret, not committed here.
+
+[vars]
+GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_FALLBACK_MODELS = "gemini-3-flash-preview,gemini-2.5-flash,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
+SALMONMETRICS_DETECTOR_URL = "https://salmonmetrics-detector-1067297744371.asia-northeast2.run.app"
