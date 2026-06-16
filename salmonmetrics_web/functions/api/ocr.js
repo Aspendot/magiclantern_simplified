@@ -124,22 +124,11 @@ const WARNING_LABELS = [
   "AI確認",
 ];
 
-const KNOWN_ROTATIONS = [
-  {
-    mode: "STANDARD",
-    stage: "ムニ・エール海洋発電所",
-    start: "2026-05-07T16:00",
-    end: "2026-05-09T08:00",
-    weapons: ["スパッタリー", "スプラローラー", "スプラマニューバー", "ジェットスイーパー"],
-  },
-  {
-    mode: "STANDARD",
-    stage: "トキシラズいぶし工房",
-    start: "2026-05-20T17:00",
-    end: "2026-05-22T09:00",
-    weapons: ["LACT-450", "ドライブワイパー", "ロングブラスター", ".96ガロン"],
-  },
-];
+// Do not seed this with ad hoc historical rotations from test screenshots.
+// Current/future shifts should come from splatoon3.ink; old screenshots should
+// fall through to the server-side image detector. A real archived schedule cache
+// can populate this later if it is generated mechanically rather than by hand.
+const KNOWN_ROTATIONS = [];
 
 const EN_STAGE_TO_JA = new Map([
   ["Sockeye Station", "アラマキ砦"],
