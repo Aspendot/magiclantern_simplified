@@ -1150,6 +1150,193 @@ dialog::backdrop {
   margin-bottom: 14px;
 }
 
+/* OCR weapon correction row + picker */
+.ocr-weapon-row {
+  grid-column: 1 / -1;
+  width: 100%;
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.ocr-weapon-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ocr-weapon-badge {
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 0.7rem;
+  font-weight: 900;
+  background: rgba(98, 245, 223, 0.14);
+  color: var(--teal);
+}
+
+.ocr-weapon-badge.warn {
+  background: rgba(255, 138, 61, 0.16);
+  color: var(--orange);
+}
+
+.ocr-weapon-slots {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ocr-weapon-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+
+.ocr-weapon-slot:hover,
+.ocr-weapon-slot:focus-visible {
+  border-color: var(--teal);
+  outline: none;
+}
+
+.ocr-weapon-slot:active {
+  transform: scale(0.96);
+}
+
+.ocr-weapon-slot.empty {
+  border-style: dashed;
+}
+
+.ocr-weapon-art {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+}
+
+.ocr-weapon-art img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.ocr-weapon-q {
+  font-size: 1.1rem;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+.ocr-weapon-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+dialog.weapon-picker {
+  width: min(460px, 94vw);
+  max-height: 82vh;
+  padding: 0;
+}
+
+.weapon-picker-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.weapon-picker-search {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.weapon-picker-close {
+  width: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.weapon-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+  max-height: calc(82vh - 67px);
+  overflow-y: auto;
+}
+
+.weapon-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.weapon-pick:hover,
+.weapon-pick:focus-visible {
+  border-color: var(--teal);
+  outline: none;
+}
+
+.weapon-pick img {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+}
+
+.weapon-pick span {
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.weapon-picker-empty {
+  grid-column: 1 / -1;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
 @media (max-width: 760px) {
   .app-shell {
     padding-inline: 10px;

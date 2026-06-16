@@ -3,6 +3,7 @@ const STORAGE_TOKEN = "salmonmetrics.accessToken";
 const STORAGE_CONFIG = "salmonmetrics.shiftConfig";
 const STORAGE_ANALYTICS_USER = "salmonmetrics.analyticsUser";
 const STORAGE_CLIENT = "salmonmetrics.clientId";
+const STORAGE_WEAPON_CORRECTIONS = "salmonmetrics.weaponCorrections";
 const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json";
 const WEAPON_FUZZY_MARGIN = 0.055;
 const WEAPON_FUZZY_MIN_SCORE = 0.82;
@@ -2553,7 +2554,7 @@ function applyOcrResult(result) {
 function applyOcrWeaponsToShift(result) {
   const weapons = normalizeOcrWeapons(result.weapons);
   const weaponSource = String(result.weaponSource || "").toLowerCase();
-  const hasTrustedWeapons = ["schedule", "known_rotation", "local_match"].includes(weaponSource)
+  const hasTrustedWeapons = ["schedule", "known_rotation", "local_match", "manual"].includes(weaponSource)
     && weapons.length === 4
     && !hasOcrWeaponWarning(result.warnings);
   if (!hasTrustedWeapons) {
@@ -2776,8 +2777,10 @@ function renderOcrResult(result) {
   if (attemptPath && attemptPath !== displayGeminiModelName(result.model)) {
     chips.splice(1, 0, ocrChip("経路", attemptPath));
   }
-  elements.ocrResult.innerHTML = chips.join("");
+  state.lastOcrResult = result;
+  elements.ocrResult.innerHTML = ocrWeaponRowHtml(result) + chips.join("");
   elements.ocrResult.hidden = false;
+  ensureOcrWeaponEditing();
 }
 
 function weaponChipLabel(source = "") {
@@ -2785,8 +2788,162 @@ function weaponChipLabel(source = "") {
   if (source === "random") return "ブキ・ランダム";
   if (source === "schedule") return "ブキ・予定表";
   if (source === "known_rotation") return "ブキ・確定";
+  if (source === "manual") return "ブキ・修正済み";
   if (source === "vlm") return "ブキ・要確認";
   return "ブキ";
+}
+
+// --- 1-tap weapon correction -------------------------------------------------
+// The supply weapons are shown as tappable icons. Trusted sources (schedule /
+// known rotation) read quiet; an uncertain VLM read is flagged. Tapping any
+// slot opens a searchable picker; the correction updates the form + shift and
+// is captured locally so wrong reads become future training data.
+function ocrWeaponRowHtml(result) {
+  const source = String(result.weaponSource || "").toLowerCase();
+  const trusted = ["schedule", "known_rotation", "manual", "local_match", "random"].includes(source);
+  const weapons = Array.isArray(result.weapons) ? result.weapons.slice(0, 4) : [];
+  let slots = "";
+  for (let index = 0; index < 4; index += 1) {
+    const name = weapons[index] || "";
+    const weapon = name ? resolveWeaponIcon(name) : null;
+    const label = weapon?.nameJa || name || "未選択";
+    const art = weapon?.icon
+      ? `<img src="${escapeHtml(weapon.icon)}" alt="" loading="lazy" decoding="async" />`
+      : `<span class="ocr-weapon-q">${name ? escapeHtml(name.slice(0, 1)) : "？"}</span>`;
+    slots += `
+      <button type="button" class="ocr-weapon-slot${name ? "" : " empty"}" data-weapon-slot="${index}" title="${escapeHtml(label)}・タップで修正">
+        <span class="ocr-weapon-art">${art}</span>
+        <span class="ocr-weapon-name">${escapeHtml(name ? label : "選択")}</span>
+      </button>
+    `;
+  }
+  const badge = trusted
+    ? `<span class="ocr-weapon-badge ok">${escapeHtml(weaponChipLabel(source))}</span>`
+    : `<span class="ocr-weapon-badge warn">要確認・タップで修正</span>`;
+  return `
+    <div class="ocr-weapon-row" role="group" aria-label="支給ブキ">
+      <div class="ocr-weapon-head">${badge}</div>
+      <div class="ocr-weapon-slots">${slots}</div>
+    </div>
+  `;
+}
+
+function ensureOcrWeaponEditing() {
+  if (elements.ocrResult.dataset.weaponEditBound === "1") return;
+  elements.ocrResult.dataset.weaponEditBound = "1";
+  elements.ocrResult.addEventListener("click", (event) => {
+    const slot = event.target.closest("[data-weapon-slot]");
+    if (!slot) return;
+    openWeaponPicker(Number(slot.dataset.weaponSlot));
+  });
+}
+
+function closeDialogElement(dialog) {
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+function buildWeaponPickerDialog() {
+  if (state.weaponPickerDialog) return state.weaponPickerDialog;
+  const dialog = document.createElement("dialog");
+  dialog.className = "weapon-picker";
+  dialog.innerHTML = `
+    <div class="weapon-picker-head">
+      <input type="search" class="weapon-picker-search" placeholder="ブキを検索…" autocomplete="off" />
+      <button type="button" class="weapon-picker-close" aria-label="閉じる">✕</button>
+    </div>
+    <div class="weapon-picker-grid"></div>
+  `;
+  dialog.querySelector(".weapon-picker-grid").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-weapon-name]");
+    if (!button) return;
+    applyWeaponCorrection(Number(dialog.dataset.slot), button.dataset.weaponName);
+    closeDialogElement(dialog);
+  });
+  dialog.querySelector(".weapon-picker-close").addEventListener("click", () => closeDialogElement(dialog));
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) closeDialogElement(dialog);
+  });
+  dialog.querySelector(".weapon-picker-search").addEventListener("input", (event) => {
+    filterWeaponPicker(dialog, event.target.value);
+  });
+  document.body.append(dialog);
+  state.weaponPickerDialog = dialog;
+  return dialog;
+}
+
+function openWeaponPicker(slot) {
+  if (!Number.isInteger(slot)) return;
+  const dialog = buildWeaponPickerDialog();
+  dialog.dataset.slot = String(slot);
+  const search = dialog.querySelector(".weapon-picker-search");
+  search.value = "";
+  filterWeaponPicker(dialog, "");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+  search.focus();
+}
+
+function filterWeaponPicker(dialog, query) {
+  const grid = dialog.querySelector(".weapon-picker-grid");
+  const needle = String(query || "").trim().toLowerCase();
+  const weapons = (state.weaponManifest || []).filter((weapon) => {
+    if (!needle) return true;
+    const hay = `${weapon.nameJa || ""} ${weapon.nameEn || ""} ${weapon.key || ""}`.toLowerCase();
+    return hay.includes(needle);
+  });
+  if (!weapons.length) {
+    grid.innerHTML = `<p class="weapon-picker-empty">該当するブキがありません</p>`;
+    return;
+  }
+  grid.innerHTML = weapons.map((weapon) => {
+    const name = weapon.nameJa || weapon.key || "";
+    const art = weapon.icon
+      ? `<img src="${escapeHtml(weapon.icon)}" alt="" loading="lazy" decoding="async" />`
+      : `<span class="ocr-weapon-q">${escapeHtml(name.slice(0, 1))}</span>`;
+    return `
+      <button type="button" class="weapon-pick" data-weapon-name="${escapeHtml(name)}" title="${escapeHtml(name)}">
+        ${art}
+        <span>${escapeHtml(name)}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function applyWeaponCorrection(slot, weaponName) {
+  const result = state.lastOcrResult;
+  if (!result || !Number.isInteger(slot) || !weaponName) return;
+  const weapons = Array.isArray(result.weapons) ? [...result.weapons] : [];
+  while (weapons.length < 4) weapons.push("");
+  const previous = weapons[slot] || "";
+  if (previous === weaponName) return;
+  recordWeaponCorrection(result, slot, previous, weaponName);
+  weapons[slot] = weaponName;
+  result.weapons = weapons.slice(0, 4);
+  result.weaponSource = "manual";
+  result.warnings = normalizeOcrWarnings((result.warnings || []).filter((warning) => !String(warning).includes("ブキ")));
+  applyOcrResult(result);
+  renderOcrResult(result);
+  toast("ブキを修正しました");
+}
+
+function recordWeaponCorrection(result, slot, previous, corrected) {
+  try {
+    const list = JSON.parse(localStorage.getItem(STORAGE_WEAPON_CORRECTIONS) || "[]");
+    list.push({
+      ts: new Date().toISOString(),
+      slot,
+      previous,
+      corrected,
+      source: result.weaponSource || "",
+      stage: result.stage || "",
+      stampedAt: result.stampedAt || "",
+      model: result.model || "",
+    });
+    localStorage.setItem(STORAGE_WEAPON_CORRECTIONS, JSON.stringify(list.slice(-500)));
+  } catch {
+    // Best-effort capture; a storage failure must never break the correction.
+  }
 }
 
 function formatOcrWarningSummary(warnings = []) {
