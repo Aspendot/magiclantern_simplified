@@ -15,7 +15,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.9"
+SERVICE_VERSION = "0.2.10"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -125,14 +125,34 @@ class WeaponDetector:
                 continue
             focused_region_name, focused_region, focused_offset = focused
             if "weapon_pill" in focused_region_name:
-                strict_groups = [
-                    self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset),
-                    self._classify_weapon_pill_components(focused_region_name, focused_region, focused_offset),
-                ]
-                for grouped in strict_groups:
-                    if grouped:
-                        candidate_groups.append((focused_region_name, grouped))
-                if not any(strict_groups):
+                component_group = self._classify_weapon_pill_components(
+                    focused_region_name,
+                    focused_region,
+                    focused_offset,
+                )
+                component_accepted = False
+                if component_group:
+                    candidate_groups.append((focused_region_name, component_group))
+                    component_scores = [item.score for item in component_group]
+                    component_confidence = float(sum(component_scores) / max(1, len(component_scores))) * min(
+                        1.0,
+                        len(component_group) / 4,
+                    )
+                    component_accepted = self._is_accepted_group(component_group, component_confidence, component_scores)
+                if not component_accepted:
+                    even_slot_group = self._classify_weapon_pill_even_slots(
+                        focused_region_name,
+                        focused_region,
+                        focused_offset,
+                    )
+                    if even_slot_group:
+                        candidate_groups.append((focused_region_name, even_slot_group))
+
+                slot_template_group = self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset)
+                if slot_template_group:
+                    candidate_groups.append((focused_region_name, slot_template_group))
+
+                if not component_group and not slot_template_group:
                     grouped = self._match_weapon_pill_even_slots(focused_region_name, focused_region, focused_offset)
                     if grouped:
                         candidate_groups.append((focused_region_name, grouped))
@@ -659,11 +679,7 @@ class WeaponDetector:
             seen_weapon_ids: set[str] = set()
 
             for x, y, w, h in boxes:
-                crop = self._crop_component(region, x, y, w, h)
-                if crop is None:
-                    selected = []
-                    break
-                prediction = self._classify_component_crop(crop)
+                prediction = self._classify_component_box(region, x, y, w, h)
                 if prediction is None:
                     selected = []
                     break
@@ -696,6 +712,123 @@ class WeaponDetector:
 
         return []
 
+    def _classify_weapon_pill_even_slots(
+        self, region_name: str, region: np.ndarray, offset: tuple[int, int]
+    ) -> list[MatchCandidate]:
+        if self.classifier_net is None or not self.classifier_labels:
+            return []
+
+        span = self._component_slot_span(region)
+        if span is None:
+            return []
+        x0, x1, y0, y1 = span
+        width = x1 - x0
+        height = y1 - y0
+        if width < region.shape[1] * 0.42 or height < 6:
+            return []
+
+        by_id = {template.info.weapon_id: template for template in self.templates}
+        selected: list[MatchCandidate] = []
+        seen_weapon_ids: set[str] = set()
+
+        bounds = [int(round(x0 + width * index / 4)) for index in range(5)]
+        for slot_index in range(4):
+            slot_x0 = bounds[slot_index]
+            slot_x1 = bounds[slot_index + 1]
+            slot_w = max(1, slot_x1 - slot_x0)
+
+            best_prediction: tuple[str, float, float] | None = None
+            best_score = -1.0
+            for x_pad_ratio in (0.08, 0.18, 0.30):
+                x_pad = max(2, int(slot_w * x_pad_ratio))
+                y_pad = max(4, int(height * 0.42))
+                cx0 = max(0, slot_x0 - x_pad)
+                cx1 = min(region.shape[1], slot_x1 + x_pad)
+                cy0 = max(0, y0 - y_pad)
+                cy1 = min(region.shape[0], y1 + y_pad)
+                crop = region[cy0:cy1, cx0:cx1]
+                if crop.shape[0] < 4 or crop.shape[1] < 4:
+                    continue
+                prediction = self._classify_component_crop(crop)
+                if prediction is None:
+                    continue
+                _, probability, margin = prediction
+                score = probability + max(0.0, min(1.0, margin)) * 0.08
+                if score > best_score:
+                    best_score = score
+                    best_prediction = prediction
+
+            if best_prediction is None:
+                return []
+            weapon_id, probability, margin = best_prediction
+            template = by_id.get(weapon_id)
+            if template is None or weapon_id in seen_weapon_ids:
+                return []
+            if not self._component_prediction_is_usable(probability, margin):
+                return []
+            seen_weapon_ids.add(weapon_id)
+            selected.append(
+                MatchCandidate(
+                    template=template,
+                    score=self._component_prediction_score(probability, margin),
+                    x=slot_x0 + offset[0],
+                    y=y0 + offset[1],
+                    w=slot_w,
+                    h=height,
+                    region_name=region_name,
+                    region_offset=offset,
+                    method="cnn_real_crop_classifier",
+                )
+            )
+
+        return selected
+
+    def _component_slot_span(self, region: np.ndarray) -> tuple[int, int, int, int] | None:
+        groups = self._weapon_component_box_groups(region)
+        if not groups:
+            return None
+
+        region_h, region_w = region.shape[:2]
+        best: tuple[float, int, int, int, int] | None = None
+        for group in groups:
+            areas = [w * h for _, _, w, h in group]
+            median_area = float(np.median(areas)) if areas else 0.0
+            filtered: list[tuple[int, int, int, int]] = []
+            for x, y, w, h in group:
+                area = w * h
+                is_small_edge = x <= 2 and (area < median_area * 0.80 or w < region_w * 0.16)
+                if is_small_edge:
+                    continue
+                if area < max(36, median_area * 0.12):
+                    continue
+                filtered.append((x, y, w, h))
+            if len(filtered) < 3:
+                continue
+
+            x0 = min(x for x, _, _, _ in filtered)
+            x1 = max(x + w for x, _, w, _ in filtered)
+            y0 = min(y for _, y, _, _ in filtered)
+            y1 = max(y + h for _, y, _, h in filtered)
+            span = x1 - x0
+            if span < region_w * 0.42:
+                continue
+            vertical_span = y1 - y0
+            score = (
+                span
+                + len(filtered) * 18.0
+                + vertical_span * 4.0
+                - y0 * 0.8
+                - abs((x0 + x1) / 2 - region_w * 0.48) * 0.12
+            )
+            if best is None or score > best[0]:
+                best = (score, x0, x1, y0, y1)
+
+        if best is None:
+            return None
+        _, x0, x1, y0, y1 = best
+        pad_x = max(1, int((x1 - x0) * 0.015))
+        return max(0, x0 - pad_x), min(region_w, x1 + pad_x), max(0, y0), min(region_h, y1)
+
     @staticmethod
     def _component_prediction_is_usable(probability: float, margin: float) -> bool:
         if probability < 0.40:
@@ -709,6 +842,28 @@ class WeaponDetector:
     @staticmethod
     def _component_prediction_score(probability: float, margin: float) -> float:
         return min(0.999, max(probability, 0.68 + margin * 0.28))
+
+    def _classify_component_box(self, region: np.ndarray, x: int, y: int, w: int, h: int) -> tuple[str, float, float] | None:
+        best_prediction: tuple[str, float, float] | None = None
+        best_score = -1.0
+
+        # Different weapon families need different context at screenshot size:
+        # thin chargers/wipers often need a tight crop, while compact shooters
+        # and umbrella-like shapes are safer with surrounding pill context.
+        for pad_scale in (0.16, 0.28, 0.45, 0.65, 0.90):
+            crop = self._crop_component(region, x, y, w, h, pad_scale=pad_scale)
+            if crop is None:
+                continue
+            prediction = self._classify_component_crop(crop)
+            if prediction is None:
+                continue
+            _, probability, margin = prediction
+            score = probability + max(0.0, min(1.0, margin)) * 0.08
+            if score > best_score:
+                best_score = score
+                best_prediction = prediction
+
+        return best_prediction
 
     def _classify_component_crop(self, crop: np.ndarray) -> tuple[str, float, float] | None:
         if self.classifier_net is None:
@@ -746,8 +901,8 @@ class WeaponDetector:
         return cv2.resize(canvas, (64, 64), interpolation=cv2.INTER_AREA)
 
     @staticmethod
-    def _crop_component(region: np.ndarray, x: int, y: int, w: int, h: int) -> np.ndarray | None:
-        pad = max(3, int(max(w, h) * 0.28))
+    def _crop_component(region: np.ndarray, x: int, y: int, w: int, h: int, pad_scale: float = 0.45) -> np.ndarray | None:
+        pad = max(3, int(max(w, h) * pad_scale))
         x0 = max(0, x - pad)
         y0 = max(0, y - pad)
         x1 = min(region.shape[1], x + w + pad)
@@ -1318,10 +1473,28 @@ class WeaponDetector:
                 return False
 
         if method == "opencv_slot_template_match":
-            return confidence >= ACCEPT_AVG_SCORE and min(scores) >= ACCEPT_MIN_SCORE
+            # The template matcher is useful diagnostic evidence, but it has
+            # produced high-confidence wrong answers on low-detail screenshots.
+            # Final fixed-weapon answers should come from random detection or
+            # the component classifier when the classifier model is available.
+            return False
 
         if method == "cnn_real_crop_classifier":
-            return confidence >= 0.82 and min(scores) >= 0.72
+            local_boxes = [
+                (item.x - item.region_offset[0], item.y - item.region_offset[1], item.w, item.h) for item in group
+            ]
+            areas = [w * h for _, _, w, h in local_boxes]
+            median_area = float(np.median(areas))
+            median_side = float(np.median([max(w, h) for _, _, w, h in local_boxes]))
+            for local_x, local_y, w, h in local_boxes:
+                area = w * h
+                touches_crop_edge = local_x <= 2 or local_y <= 2
+                if touches_crop_edge and (area < median_area * 0.55 or max(w, h) < median_side * 0.72):
+                    return False
+                if area < median_area * 0.18:
+                    return False
+
+            return confidence >= 0.925 and min(scores) >= 0.78
 
         if method == "opencv_color_template_match":
             # Loose whole-pill matching can assign very high scores to tiny

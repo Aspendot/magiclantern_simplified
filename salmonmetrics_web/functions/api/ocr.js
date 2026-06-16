@@ -892,11 +892,11 @@ function localWeaponHintFor(weaponHints) {
   const methods = new Set(weapons.map((weapon) => weapon.method).filter(Boolean));
   let highConfidence = false;
   if (methods.size === 1 && methods.has("opencv_slot_template_match")) {
-    highConfidence = confidence >= 0.98 && minSlotConfidence >= 0.975;
+    highConfidence = false;
   } else if (methods.size === 1 && methods.has("opencv_color_template_match")) {
     highConfidence = false;
   } else if (methods.size === 1 && methods.has("cnn_real_crop_classifier")) {
-    highConfidence = confidence >= 0.82 && minSlotConfidence >= 0.72;
+    highConfidence = confidence >= 0.925 && minSlotConfidence >= 0.78;
   } else {
     highConfidence = confidence >= 0.995 && minSlotConfidence >= 0.99;
   }
