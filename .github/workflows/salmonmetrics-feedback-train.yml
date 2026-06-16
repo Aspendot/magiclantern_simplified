@@ -35,29 +35,59 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r salmonmetrics_detector/requirements-train.txt
 
-      - name: Import feedback, retrain, and verify
+      - name: Import feedback crops
+        run: |
+          python salmonmetrics_detector/tools/import_weapon_feedback.py \
+            --feedback-url https://salmonmetrics.pages.dev/api/weapon-feedback \
+            --token "$WEAPON_FEEDBACK_EXPORT_TOKEN"
+
+      - name: Commit imported feedback crops
+        id: commit_feedback
+        run: |
+          if [ -z "$(git status --porcelain -- salmonmetrics_detector/assets/training/real_weapon_crops salmonmetrics_detector/assets/training/feedback_imports)" ]; then
+            echo "No new feedback crops to commit."
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "salmonmetrics-feedback-trainer"
+          git config user.email "actions@users.noreply.github.com"
+          git add salmonmetrics_detector/assets/training/real_weapon_crops \
+            salmonmetrics_detector/assets/training/feedback_imports
+          if git diff --cached --quiet; then
+            echo "No staged feedback crops to commit."
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "Import weapon feedback crops"
+          git push origin HEAD:dev
+          echo "changed=1" >> "$GITHUB_OUTPUT"
+
+      - name: Retrain and verify candidate classifier
+        if: steps.commit_feedback.outputs.changed == '1' || github.event_name == 'workflow_dispatch'
         run: |
           python salmonmetrics_detector/tools/retrain_from_feedback.py \
+            --skip-import \
             --epochs 8 \
             --samples 14000 \
             --batch-size 192 \
             --threads 4 \
             --real-fraction 0.76 \
-            --unknown-fraction 0.12
+            --unknown-fraction 0.12 \
+            --restore-on-verify-failure \
+            --allow-verify-failure
 
-      - name: Commit updated classifier artifacts
+      - name: Commit promoted classifier artifacts
+        if: steps.commit_feedback.outputs.changed == '1' || github.event_name == 'workflow_dispatch'
         run: |
-          if [ -z "$(git status --porcelain -- salmonmetrics_detector)" ]; then
-            echo "No detector training changes to commit."
+          if [ -z "$(git status --porcelain -- salmonmetrics_detector/assets/models)" ]; then
+            echo "No verified classifier artifact changes to commit."
             exit 0
           fi
           git config user.name "salmonmetrics-feedback-trainer"
           git config user.email "actions@users.noreply.github.com"
-          git add salmonmetrics_detector/assets/models \
-            salmonmetrics_detector/assets/training/real_weapon_crops \
-            salmonmetrics_detector/assets/training/feedback_imports
+          git add salmonmetrics_detector/assets/models
           if git diff --cached --quiet; then
-            echo "No staged detector training changes to commit."
+            echo "No staged classifier artifact changes to commit."
             exit 0
           fi
           git commit -m "Train weapon classifier from user feedback"

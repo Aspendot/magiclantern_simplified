@@ -78,14 +78,15 @@ If the console does not offer a source-directory field, create a new GitHub repo
 
 1. Normalize screenshot size.
 2. Dynamically search for green result anchors near the top result UI.
-3. Build candidate regions around those anchors plus upper-screen fallbacks.
+3. Build candidate regions around those anchors, tight wide/short weapon-row crops, plus upper-screen fallbacks.
 4. Detect random weapon rotations by green question-mark clusters.
 5. Multi-scale match weapon icon templates with OpenCV.
 6. Fuse grayscale shape matching with masked HSV color agreement inside the weapon pill.
 7. Prefer strict four-slot geometry when it is available.
 8. Also classify extracted top-bar weapon components with the trained real-crop ONNX model, so a bad strict template proposal cannot block a stronger classifier read.
-9. Fall back to an evenly spaced row sequence only when strict template and classifier evidence are unavailable.
-10. Return `fixed_weapons`, `random_weapons`, `uncertain`, or `not_visible`.
+9. Stop immediately when the CNN component classifier returns an accepted four-slot read; this avoids slow and weaker OpenCV fallback work after a strong result already exists.
+10. Fall back to an evenly spaced row sequence only when strict template and classifier evidence are unavailable.
+11. Return `fixed_weapons`, `random_weapons`, `uncertain`, or `not_visible`.
 
 The detector should resolve visible top-bar icons across device sizes before returning review/uncertain. It should still refuse cases where the bar is missing, severely cropped, or too degraded to support a real visual read.
 
@@ -141,7 +142,7 @@ Only slots listed in the feedback record's `changedSlots` are imported by defaul
 
 No deterministic per-screenshot rule is added. The corrected examples only influence the detector by becoming additional labeled real-crop training data for the CNN classifier.
 
-GitHub Actions workflow `.github/workflows/salmonmetrics-feedback-train.yml` can run this loop on a schedule or manually. Configure repository secret `WEAPON_FEEDBACK_EXPORT_TOKEN` to the same value used by the Pages feedback export endpoint. When the workflow produces model/training changes, it commits them to `dev`; the existing Cloud Run auto-deploy path then publishes the new detector. The regression gate uses repo-local screenshots in `assets/regression_screenshots/`, so CI does not depend on `C:\Users\Amir\Downloads`.
+GitHub Actions workflow `.github/workflows/salmonmetrics-feedback-train.yml` can run this loop on a schedule or manually. Configure repository secret `WEAPON_FEEDBACK_EXPORT_TOKEN` to the same value used by the Pages feedback export endpoint. The workflow commits imported feedback crops first, then trains a candidate model. A candidate model is promoted only if `tools/verify_known_screenshots.py` passes; if verification fails, the previous model artifacts are restored and the feedback crops remain available for later training. The regression gate uses repo-local screenshots in `assets/regression_screenshots/`, so CI does not depend on `C:\Users\Amir\Downloads`.
 
 ## Assets
 

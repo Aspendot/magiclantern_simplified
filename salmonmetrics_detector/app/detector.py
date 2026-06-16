@@ -15,7 +15,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.10"
+SERVICE_VERSION = "0.2.11"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -139,6 +139,8 @@ class WeaponDetector:
                         len(component_group) / 4,
                     )
                     component_accepted = self._is_accepted_group(component_group, component_confidence, component_scores)
+                if component_accepted:
+                    break
                 if not component_accepted:
                     even_slot_group = self._classify_weapon_pill_even_slots(
                         focused_region_name,
@@ -147,6 +149,13 @@ class WeaponDetector:
                     )
                     if even_slot_group:
                         candidate_groups.append((focused_region_name, even_slot_group))
+                        even_slot_scores = [item.score for item in even_slot_group]
+                        even_slot_confidence = float(sum(even_slot_scores) / max(1, len(even_slot_scores))) * min(
+                            1.0,
+                            len(even_slot_group) / 4,
+                        )
+                        if self._is_accepted_group(even_slot_group, even_slot_confidence, even_slot_scores):
+                            break
 
                 slot_template_group = self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset)
                 if slot_template_group:
@@ -325,6 +334,11 @@ class WeaponDetector:
         if anchor_regions:
             return anchor_regions
 
+        cropped_weapon_row = self._cropped_weapon_row_region(image)
+        if cropped_weapon_row is not None:
+            cropped_region, cropped_offset = cropped_weapon_row
+            regions.append(("cropped_weapon_pill", cropped_region, cropped_offset))
+
         fallback_regions = [
             ("upper_center", (0.12, 0.10, 0.76, 0.25)),
             ("upper_wide", (0.06, 0.08, 0.88, 0.30)),
@@ -345,6 +359,36 @@ class WeaponDetector:
             seen.add(key)
             deduped.append((name, region, (x, y)))
         return deduped
+
+    def _cropped_weapon_row_region(self, image: np.ndarray) -> tuple[np.ndarray, tuple[int, int]] | None:
+        height, width = image.shape[:2]
+        if height < 40 or width < 160:
+            return None
+        aspect = width / max(1, height)
+        if aspect < 2.2:
+            return None
+        if height > 460 and height > width * 0.42:
+            return None
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        dark_fraction = float(np.mean(gray < 72))
+        if dark_fraction < 0.22:
+            return None
+
+        groups = self._weapon_component_box_groups(image)
+        if not groups:
+            return None
+        group = groups[0]
+        centers_x = [x + w / 2 for x, _, w, _ in group]
+        centers_y = [y + h / 2 for _, y, _, h in group]
+        span_x = max(centers_x) - min(centers_x)
+        median_h = float(np.median([h for _, _, _, h in group]))
+        y_spread = max(centers_y) - min(centers_y)
+        if span_x < width * 0.42:
+            return None
+        if y_spread > max(height * 0.48, median_h * 2.4):
+            return None
+        return image, (0, 0)
 
     def _focus_weapon_region(
         self, region_name: str, region: np.ndarray, offset: tuple[int, int]

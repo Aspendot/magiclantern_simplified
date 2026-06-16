@@ -33,6 +33,7 @@ DEFAULT_CASES = (
     ExpectedCase("IMG_3649.JPG", "fixed_weapons", ("lact450", "drivewiper", "longblaster", "96gal")),
     ExpectedCase("IMG_4253.JPG", "fixed_weapons", ("bottlegeyser", "parashelter", "sharp", "squiclean_a")),
     ExpectedCase("IMG_4255.JPG", "fixed_weapons", ("spygadget", "promodeler_mg", "gaen_ff", "rapid_elite")),
+    ExpectedCase("IMG_4255_weapon_crop.png", "fixed_weapons", ("spygadget", "promodeler_mg", "gaen_ff", "rapid_elite")),
 )
 
 DEFAULT_NEGATIVE_CASES = (
