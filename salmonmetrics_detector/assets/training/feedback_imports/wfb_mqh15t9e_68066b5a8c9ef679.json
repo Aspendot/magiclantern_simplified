@@ -1,0 +1,27 @@
+{
+  "feedback_id": "wfb_mqh15t9e_68066b5a8c9ef679",
+  "source": "feedback/2026-06-16/wfb_mqh15t9e_68066b5a8c9ef679.json",
+  "written": [
+    {
+      "slot": 1,
+      "weapon_id": "spygadget",
+      "path": "/home/runner/work/magiclantern_simplified/magiclantern_simplified/salmonmetrics_detector/assets/training/real_weapon_crops/spygadget/feedback_wfb_mqh15t9e_68066b5a8c9ef679_slot1.png"
+    },
+    {
+      "slot": 2,
+      "weapon_id": "promodeler_mg",
+      "path": "/home/runner/work/magiclantern_simplified/magiclantern_simplified/salmonmetrics_detector/assets/training/real_weapon_crops/promodeler_mg/feedback_wfb_mqh15t9e_68066b5a8c9ef679_slot2.png"
+    },
+    {
+      "slot": 3,
+      "weapon_id": "gaen_ff",
+      "path": "/home/runner/work/magiclantern_simplified/magiclantern_simplified/salmonmetrics_detector/assets/training/real_weapon_crops/gaen_ff/feedback_wfb_mqh15t9e_68066b5a8c9ef679_slot3.png"
+    },
+    {
+      "slot": 4,
+      "weapon_id": "rapid_elite",
+      "path": "/home/runner/work/magiclantern_simplified/magiclantern_simplified/salmonmetrics_detector/assets/training/real_weapon_crops/rapid_elite/feedback_wfb_mqh15t9e_68066b5a8c9ef679_slot4.png"
+    }
+  ],
+  "createdAt": "2026-06-16T19:23:46.658Z"
+}
