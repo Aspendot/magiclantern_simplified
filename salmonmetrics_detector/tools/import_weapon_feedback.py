@@ -103,7 +103,14 @@ def fetch_feedback_records(url: str, token: str, limit: int) -> list[tuple[str, 
         if cursor:
             query["cursor"] = cursor
         target = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
-        request = urllib.request.Request(target, headers={"x-feedback-token": token, "accept": "application/json"})
+        request = urllib.request.Request(
+            target,
+            headers={
+                "x-feedback-token": token,
+                "accept": "application/json",
+                "user-agent": "Mozilla/5.0 SalmonMetricsFeedbackTrainer/1.0",
+            },
+        )
         with urllib.request.urlopen(request, timeout=60) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if not payload.get("ok"):
