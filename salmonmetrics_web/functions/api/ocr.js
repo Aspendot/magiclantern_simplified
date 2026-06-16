@@ -226,6 +226,8 @@ const EN_WEAPON_TO_JA = new Map([
   ["Grizzco Splatana", "クマサン印のワイパー"],
   ["Grizzco Roller", "クマサン印のローラー"],
   ["Grizzco Dualies", "クマサン印のマニューバー"],
+  ["Random", "ランダム"],
+  ["Random Gold", "ランダム"],
 ]);
 
 const RESULT_SCHEMA = {
@@ -405,12 +407,13 @@ export async function onRequestPost({ request, env }) {
     }
 
     const models = configuredModels(env);
-    const browserWeaponHints = normalizeWeaponHints(body.weaponHints);
-    const detectorWeaponHints = await detectWeaponsWithService(images.full, env).catch(() => null);
-    const weaponHints = detectorWeaponHints
-      ? (localWeaponHintFor(detectorWeaponHints) ? detectorWeaponHints : null)
-      : browserWeaponHints;
-    const extraction = await extractWithGemini({ apiKey, models, images, weaponHints, debug });
+    // Weapons are deterministic from the screenshot's printed play timestamp + the
+    // public Salmon Run schedule, so prefetch the schedule in parallel with Gemini
+    // instead of blocking on the slow Cloud Run icon detector. The detector is only
+    // consulted as a fallback (resolveDeterministicWeapons) when the schedule misses.
+    const schedulePromise = fetchCoopSchedule(env).catch(() => null);
+    const weaponContext = { schedulePromise, images, env };
+    const extraction = await extractWithGemini({ apiKey, models, images, weaponContext, debug });
     return jsonResponse(extraction);
   } catch (error) {
     return jsonResponse(
@@ -424,7 +427,7 @@ export async function onRequestPost({ request, env }) {
   }
 }
 
-async function extractWithGemini({ apiKey, models, images, weaponHints, debug }) {
+async function extractWithGemini({ apiKey, models, images, weaponContext, debug }) {
   const errors = [];
   const modelAttempts = [];
   let lastParsed = null;
@@ -434,7 +437,7 @@ async function extractWithGemini({ apiKey, models, images, weaponHints, debug })
   for (const model of models) {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       try {
-        const response = await callGemini({ apiKey, model, images, weaponHints, attempt, errors });
+        const response = await callGemini({ apiKey, model, images, attempt, errors });
         const rawText = geminiText(response);
         const parsed = parseJsonObject(rawText);
         lastParsed = parsed;
@@ -442,7 +445,7 @@ async function extractWithGemini({ apiKey, models, images, weaponHints, debug })
         lastParsedAttempt = attempt;
         modelAttempts.push({ model, attempt, status: "success" });
         const normalized = normalizeResult(parsed);
-        await resolveDeterministicWeapons(normalized, weaponHints);
+        await resolveDeterministicWeapons(normalized, weaponContext);
         normalized.warnings = mergeWarnings(normalized.warnings, qualityWarnings(normalized));
 
         return {
@@ -479,7 +482,7 @@ async function extractWithGemini({ apiKey, models, images, weaponHints, debug })
 
   if (lastParsed) {
     const normalized = normalizeResult(lastParsed);
-    await resolveDeterministicWeapons(normalized, weaponHints);
+    await resolveDeterministicWeapons(normalized, weaponContext);
     normalized.warnings = mergeWarnings(normalized.warnings, ["AI確認", ...qualityWarnings(normalized)]);
     return {
       ok: true,
@@ -800,35 +803,51 @@ function normalizeResult(value = {}) {
   };
 }
 
-async function resolveDeterministicWeapons(result, weaponHints = null) {
-  const local = localWeaponHintFor(weaponHints);
-  if (local?.mode === "random_weapons") {
-    applyResolvedWeapons(result, ["ランダム", "ランダム", "ランダム", "ランダム"], "random");
-    return;
-  }
-  if (local?.weapons?.length === 4) {
-    applyResolvedWeapons(result, local.weapons, "local_match");
-    return;
-  }
-
+async function resolveDeterministicWeapons(result, context = null) {
+  // 1) Manually verified known rotations win outright.
   const known = knownRotationFor(result);
   if (known) {
     applyResolvedWeapons(result, known.weapons, "known_rotation", known.stage);
     return;
   }
 
-  const scheduled = await scheduleRotationFor(result);
+  // 2) Public Salmon Run schedule, keyed by the screenshot's printed play
+  //    timestamp. Exact by construction, so it takes priority over any
+  //    pixel-level icon guess.
+  const scheduled = await scheduleRotationFor(result, context?.schedulePromise);
   if (scheduled) {
     applyResolvedWeapons(result, scheduled.weapons, "schedule", scheduled.stage);
     return;
   }
 
+  // 3) Icon detector fallback, consulted lazily only when the schedule cannot
+  //    resolve (stamp-less or out-of-window screenshots). Never trusts
+  //    client-supplied hints as authoritative.
+  const detected = await detectorFallback(context);
+  if (detected?.mode === "random_weapons") {
+    applyResolvedWeapons(result, ["ランダム", "ランダム", "ランダム", "ランダム"], "random");
+    return;
+  }
+  if (detected?.weapons?.length === 4) {
+    applyResolvedWeapons(result, detected.weapons, "local_match");
+    return;
+  }
+
+  // 4) Nothing deterministic — keep Gemini's own read, flagged for review.
   result.weapons = normalizeWeapons(result.weapons);
   result.weaponSource = result.weapons.length === 4 ? "vlm" : "";
 }
 
+async function detectorFallback(context) {
+  if (!context?.images?.full) return null;
+  const detectorHints = await detectWeaponsWithService(context.images.full, context.env).catch(() => null);
+  return detectorHints ? localWeaponHintFor(detectorHints) : null;
+}
+
 function applyResolvedWeapons(result, weapons, source, stage = "") {
-  const normalizedWeapons = normalizeWeapons(weapons, { allowRandom: source === "random" });
+  // Schedule and known rotations legitimately contain random (Grizzco) slots.
+  const allowRandom = source === "random" || source === "schedule" || source === "known_rotation";
+  const normalizedWeapons = normalizeWeapons(weapons, { allowRandom });
   if (normalizedWeapons.length !== 4) return;
   result.weapons = normalizedWeapons;
   result.weaponSource = source;
@@ -900,26 +919,35 @@ function knownRotationFor(result) {
   });
 }
 
-async function scheduleRotationFor(result) {
+async function scheduleRotationFor(result, schedulePromise = null) {
   const battleTime = battleTimeUtcMs(result.stampedAt);
   if (!battleTime) return null;
 
+  const rotations = schedulePromise ? await schedulePromise : await fetchCoopSchedule();
+  if (!Array.isArray(rotations)) return null;
+
+  return rotations.find((rotation) => (
+    battleTime >= rotation.startMs
+    && battleTime < rotation.endMs
+    && (!result.stage || rotation.stage === result.stage || result.stage === "ビッグラン")
+    && (!result.mode || rotation.mode === result.mode || rotation.mode === "STANDARD")
+    && rotation.weapons.length === 4
+  )) || null;
+}
+
+async function fetchCoopSchedule(env = {}) {
+  const url = String(env.SALMONMETRICS_SCHEDULE_URL || SCHEDULE_URL || "").trim();
+  if (!url) return null;
   try {
-    const response = await fetch(SCHEDULE_URL, {
-      headers: {
-        "Accept": "application/json",
-      },
+    // Edge-cache the schedule for 10 min: it only changes when rotations flip,
+    // so this keeps the parallel lookup near-instant on a warm cache.
+    const response = await fetch(url, {
+      headers: { "Accept": "application/json" },
+      cf: { cacheTtl: 600, cacheEverything: true },
     });
     if (!response.ok) return null;
     const schedule = await response.json();
-    const rotations = coopScheduleRotations(schedule);
-    return rotations.find((rotation) => (
-      battleTime >= rotation.startMs
-      && battleTime < rotation.endMs
-      && (!result.stage || rotation.stage === result.stage || result.stage === "ビッグラン")
-      && (!result.mode || rotation.mode === result.mode || rotation.mode === "STANDARD")
-      && rotation.weapons.length === 4
-    )) || null;
+    return coopScheduleRotations(schedule);
   } catch {
     return null;
   }
@@ -955,12 +983,16 @@ function coopScheduleRotations(schedule) {
 
 function scheduleStageName(name) {
   const text = String(name || "").trim();
-  return EN_STAGE_TO_JA.get(text) || normalizeStageName(text);
+  // splatoon3.ink uses typographic apostrophes (Marooner's Bay, Jammin' Salmon
+  // Junction); fold them to a straight quote so the map lookup stays robust.
+  const canon = text.replace(/[‘’ʼ]/g, "'");
+  return EN_STAGE_TO_JA.get(text) || EN_STAGE_TO_JA.get(canon) || normalizeStageName(text);
 }
 
 function scheduleWeaponName(name) {
   const text = String(name || "").trim();
-  return EN_WEAPON_TO_JA.get(text) || normalizeWeaponName(text);
+  const canon = text.replace(/[‘’ʼ]/g, "'");
+  return EN_WEAPON_TO_JA.get(text) || EN_WEAPON_TO_JA.get(canon) || normalizeWeaponName(text);
 }
 
 function battleTimeUtcMs(value) {
