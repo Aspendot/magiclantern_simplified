@@ -175,6 +175,10 @@ def extract_slot_crops(detector: WeaponDetector, image_bytes: bytes) -> list[np.
     image, _ = detector._normalize_image(image)
 
     candidates: list[np.ndarray] = []
+    focused_panel = focus_feedback_weapon_pill(image)
+    if focused_panel is not None:
+        candidates.append(focused_panel)
+
     for region_name, region, offset in detector._candidate_regions(image):
         focused = detector._focus_weapon_region(region_name, region, offset)
         if focused is not None:
@@ -186,6 +190,58 @@ def extract_slot_crops(detector: WeaponDetector, image_bytes: bytes) -> list[np.
         if len(crops) == 4:
             return crops
     return []
+
+
+def focus_feedback_weapon_pill(region: np.ndarray) -> np.ndarray | None:
+    region_h, region_w = region.shape[:2]
+    if region_h < 35 or region_w < 120:
+        return None
+
+    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+    raw_dark_mask = cv2.inRange(gray, 0, 42)
+    dark_mask = cv2.morphologyEx(raw_dark_mask, cv2.MORPH_CLOSE, np.ones((5, 21), dtype=np.uint8))
+    contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    boxes: list[tuple[int, int, int, int, int]] = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area = w * h
+        if area < max(900, int(region_w * region_h * 0.020)):
+            continue
+        if y > region_h * 0.58:
+            continue
+        if w < region_w * 0.35:
+            continue
+        if h < 18 or h > min(260, region_h * 0.55):
+            continue
+        if w / max(1, h) < 3.0:
+            continue
+        boxes.append((area, x, y, w, h))
+
+    if not boxes:
+        return None
+
+    _, x, y, w, h = max(
+        boxes,
+        key=lambda item: item[0] * (1.0 - min(0.72, item[2] / max(1.0, region_h * 0.58))),
+    )
+    row_counts = np.count_nonzero(raw_dark_mask[:, x : x + w], axis=1)
+    covered_rows = np.flatnonzero(row_counts >= w * 0.42)
+    covered_rows = covered_rows[(covered_rows >= y) & (covered_rows < y + h)]
+    if len(covered_rows) >= 18:
+        y = int(covered_rows[0])
+        h = int(covered_rows[-1] - covered_rows[0] + 1)
+
+    pad_x = max(2, int(w * 0.012))
+    pad_y = max(2, int(h * 0.09))
+    x0 = max(0, x + pad_x)
+    y0 = max(0, y + pad_y)
+    x1 = min(region_w, x + int(w * 0.56))
+    y1 = min(region_h, y + h - pad_y)
+    focused = region[y0:y1, x0:x1]
+    if focused.shape[0] < 25 or focused.shape[1] < 90:
+        return None
+    return focused
 
 
 def slot_crops_from_region(detector: WeaponDetector, region: np.ndarray) -> list[np.ndarray]:
