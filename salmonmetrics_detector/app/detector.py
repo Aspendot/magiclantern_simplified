@@ -15,7 +15,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.7"
+SERVICE_VERSION = "0.2.8"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -284,7 +284,13 @@ class WeaponDetector:
             if box[2] < height * 0.36 and box[3] / max(1, box[4]) >= 2.2 and box[0] >= max(800, width * height * 0.001)
         ]
         if not clear_like_boxes:
-            clear_like_boxes = [box for box in anchor_boxes if box[2] < height * 0.42]
+            clear_like_boxes = [
+                box
+                for box in anchor_boxes
+                if box[2] < height * 0.42
+                and box[3] / max(1, box[4]) >= 1.8
+                and box[0] >= max(1200, width * height * 0.0007)
+            ]
 
         anchor_regions: list[tuple[str, np.ndarray, tuple[int, int]]] = []
         for index, (_, x, y, w, h) in enumerate(sorted(clear_like_boxes, reverse=True)[:1]):
@@ -351,14 +357,14 @@ class WeaponDetector:
                 continue
             if w < region_w * 0.35:
                 continue
-            if h < 18 or h > min(86, region_h * 0.72):
+            if h < 18 or h > min(130, region_h * 0.72):
                 continue
             if w / max(1, h) < 3.0:
                 continue
             boxes.append((area, x, y, w, h))
 
         if boxes:
-            _, x, y, w, h = sorted(boxes, key=lambda item: (item[2], -item[0]))[0]
+            _, x, y, w, h = max(boxes, key=lambda item: item[0])
             row_counts = np.count_nonzero(raw_dark_mask[:, x : x + w], axis=1)
             covered_rows = np.flatnonzero(row_counts >= w * 0.42)
             covered_rows = covered_rows[(covered_rows >= y) & (covered_rows < y + h)]
@@ -660,7 +666,11 @@ class WeaponDetector:
             template = by_id.get(weapon_id)
             if template is None:
                 return []
-            if probability < 0.72 or margin < 0.18:
+            if probability < 0.64:
+                return []
+            if probability < 0.72 and margin < 0.35:
+                return []
+            if margin < 0.16:
                 return []
             selected.append(
                 MatchCandidate(
@@ -740,7 +750,9 @@ class WeaponDetector:
                 continue
             if w < 8 or h < 8:
                 continue
-            if w > region_w * 0.85 or h > region_h * 0.80:
+            if w > region_w * 0.85 and h > region_h * 0.55:
+                continue
+            if h > region_h * 0.96:
                 continue
             if y > region_h * 0.78:
                 continue
@@ -970,7 +982,24 @@ class WeaponDetector:
         gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
         saturation = hsv[:, :, 1]
         value = hsv[:, :, 2]
-        foreground = np.where(((saturation > 35) & (value > 45)) | (gray > 85), 255, 0).astype(np.uint8)
+
+        color_or_bright = np.where(((saturation > 35) & (value > 45)) | (gray > 85), 255, 0).astype(np.uint8)
+
+        # Some weapons are nearly black against the weapon pill. Color/brightness
+        # thresholding misses them, so add local edge/contrast evidence before
+        # component grouping. Later geometry checks still require four aligned
+        # components, which keeps pill borders and text fragments from passing.
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        edges = cv2.Canny(blurred, 18, 58)
+        edges = cv2.dilate(edges, np.ones((2, 2), dtype=np.uint8), iterations=1)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
+
+        local_background = cv2.medianBlur(gray, 15)
+        local_contrast = cv2.absdiff(gray, local_background)
+        contrast_mask = np.where(local_contrast > 10, 255, 0).astype(np.uint8)
+
+        foreground = cv2.bitwise_or(color_or_bright, edges)
+        foreground = cv2.bitwise_or(foreground, contrast_mask)
         foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
         foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, np.ones((2, 2), dtype=np.uint8))
         return foreground
@@ -1208,9 +1237,11 @@ class WeaponDetector:
             return confidence >= 0.82 and min(scores) >= 0.72
 
         if method == "opencv_color_template_match":
-            # Allow color fallback only when it is extremely confident.
-            # This should allow 2.png, but still reject IMG_3649.JPG.
-            return confidence >= 0.992 and min(scores) >= 0.985
+            # Loose whole-pill matching can assign very high scores to tiny
+            # fragments. Keep it only as debug evidence; final answers must
+            # come from slot geometry, component classification, or random
+            # question-mark detection.
+            return False
 
         return False
 
@@ -1243,8 +1274,8 @@ class WeaponDetector:
                 accepted.append((region_name, group))
 
         for method in (
-            "opencv_slot_template_match",
             "cnn_real_crop_classifier",
+            "opencv_slot_template_match",
             "opencv_color_template_match",
         ):
             method_groups = [item for item in accepted if item[1] and item[1][0].method == method]

@@ -254,6 +254,10 @@ class SyntheticWeaponDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     ) -> None:
         self.templates = templates
         self.real_crops = real_crops
+        self.real_crops_by_label: dict[str, list[RealCropImage]] = {}
+        for crop in real_crops:
+            self.real_crops_by_label.setdefault(crop.weapon_id, []).append(crop)
+        self.real_crop_labels = sorted(self.real_crops_by_label)
         self.labels = labels
         self.label_to_index = {label: index for index, label in enumerate(labels)}
         self.samples = samples
@@ -269,9 +273,10 @@ class SyntheticWeaponDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         use_real = self.real_crops and rng.random() < self.real_fraction
         is_unknown = (not use_real) and rng.random() < self.unknown_fraction
         if use_real:
-            crop = self.real_crops[int(rng.integers(0, len(self.real_crops)))]
+            label = self.real_crop_labels[int(rng.integers(0, len(self.real_crop_labels)))]
+            label_crops = self.real_crops_by_label[label]
+            crop = label_crops[int(rng.integers(0, len(label_crops)))]
             canvas = _augment_real_crop(crop, rng)
-            label = crop.weapon_id
         else:
             canvas = _dark_canvas(rng)
 

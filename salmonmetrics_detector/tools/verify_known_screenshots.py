@@ -20,12 +20,23 @@ class ExpectedCase:
     weapon_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class NegativeCase:
+    filename: str
+
+
 DEFAULT_CASES = (
     ExpectedCase("1.png", "fixed_weapons", ("sputtery", "splatroller", "maneuver", "jetsweeper")),
     ExpectedCase("2.png", "fixed_weapons", ("sshooter", "hotblaster", "splatroller", "liter4k")),
     ExpectedCase("3.png", "random_weapons", ("random", "random", "random", "random")),
     ExpectedCase("4.png", "fixed_weapons", ("dentalwiper_mint", "kugelschreiber", "hissen", "tristringer")),
     ExpectedCase("IMG_3649.JPG", "fixed_weapons", ("lact450", "drivewiper", "longblaster", "96gal")),
+    ExpectedCase("IMG_4253.JPG", "fixed_weapons", ("bottlegeyser", "parashelter", "sharp", "squiclean_a")),
+    ExpectedCase("IMG_4255.JPG", "fixed_weapons", ("drivewiper", "tristringer", "sharp", "52gal")),
+)
+
+DEFAULT_NEGATIVE_CASES = (
+    NegativeCase("Mualani-69ad399dbeebbaaa668ed911.png"),
 )
 
 
@@ -75,7 +86,39 @@ def main() -> int:
             }
         )
 
-    payload = {"ok": ok, "version": SERVICE_VERSION, "templates": detector.template_count(), "cases": rows}
+    negative_rows: list[dict] = []
+    for case in DEFAULT_NEGATIVE_CASES:
+        path = args.downloads_dir / case.filename
+        if not path.exists():
+            negative_rows.append({"file": case.filename, "ok": True, "skipped": True, "reason": "missing optional negative"})
+            continue
+
+        response = detector.detect(path.read_bytes())
+        ids = tuple(weapon.weapon_id for weapon in response.weapons)
+        passed = response.mode not in {"fixed_weapons", "random_weapons"} and not ids
+        ok = ok and passed
+        negative_rows.append(
+            {
+                "file": case.filename,
+                "ok": passed,
+                "mode": response.mode,
+                "source": response.source,
+                "confidence": response.confidence,
+                "needs_review": response.needs_review,
+                "weapon_ids": ids,
+                "methods": tuple(weapon.method for weapon in response.weapons),
+                "scores": tuple(weapon.confidence for weapon in response.weapons),
+                "boxes": tuple(weapon.box.model_dump() if weapon.box else None for weapon in response.weapons),
+            }
+        )
+
+    payload = {
+        "ok": ok,
+        "version": SERVICE_VERSION,
+        "templates": detector.template_count(),
+        "cases": rows,
+        "negative_cases": negative_rows,
+    }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -87,6 +130,15 @@ def main() -> int:
                 continue
             print(
                 f"{status} {row['file']}: mode={row['mode']} source={row['source']} "
+                f"confidence={row['confidence']} ids={','.join(row['weapon_ids'])}"
+            )
+        for row in negative_rows:
+            status = "OK" if row["ok"] else "FAIL"
+            if row.get("skipped"):
+                print(f"{status} negative {row['file']}: skipped ({row['reason']})")
+                continue
+            print(
+                f"{status} negative {row['file']}: mode={row['mode']} source={row['source']} "
                 f"confidence={row['confidence']} ids={','.join(row['weapon_ids'])}"
             )
     return 0 if ok else 1
