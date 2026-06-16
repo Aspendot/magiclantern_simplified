@@ -894,9 +894,9 @@ function localWeaponHintFor(weaponHints) {
   if (methods.size === 1 && methods.has("opencv_slot_template_match")) {
     highConfidence = confidence >= 0.98 && minSlotConfidence >= 0.975;
   } else if (methods.size === 1 && methods.has("opencv_color_template_match")) {
-    highConfidence = confidence >= 0.992 && minSlotConfidence >= 0.985;
+    highConfidence = false;
   } else if (methods.size === 1 && methods.has("cnn_real_crop_classifier")) {
-    highConfidence = confidence >= 0.90 && minSlotConfidence >= 0.88;
+    highConfidence = confidence >= 0.82 && minSlotConfidence >= 0.72;
   } else {
     highConfidence = confidence >= 0.995 && minSlotConfidence >= 0.99;
   }
