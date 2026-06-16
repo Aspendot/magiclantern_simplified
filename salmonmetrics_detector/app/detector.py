@@ -15,7 +15,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.6"
+SERVICE_VERSION = "0.2.7"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -125,16 +125,17 @@ class WeaponDetector:
                 continue
             focused_region_name, focused_region, focused_offset = focused
             if "weapon_pill" in focused_region_name:
-                grouped = self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset)
-
-                if not grouped:
-                    grouped = self._classify_weapon_pill_components(focused_region_name, focused_region, focused_offset)
-
-                if not grouped:
+                strict_groups = [
+                    self._match_weapon_pill_slots(focused_region_name, focused_region, focused_offset),
+                    self._classify_weapon_pill_components(focused_region_name, focused_region, focused_offset),
+                ]
+                for grouped in strict_groups:
+                    if grouped:
+                        candidate_groups.append((focused_region_name, grouped))
+                if not any(strict_groups):
                     grouped = self._match_weapon_pill_even_slots(focused_region_name, focused_region, focused_offset)
-
-                if grouped:
-                    candidate_groups.append((focused_region_name, grouped))
+                    if grouped:
+                        candidate_groups.append((focused_region_name, grouped))
 
                 # Keep loose matching behind the final geometry/score gate; the
                 # component classifier and slot matcher are preferred when they pass.
@@ -1173,6 +1174,9 @@ class WeaponDetector:
             return False
 
         method = group[0].method
+        weapon_ids = [item.template.info.weapon_id for item in group]
+        if len(set(weapon_ids)) != len(weapon_ids):
+            return False
 
         centers_x = sorted(item.center[0] for item in group)
         centers_y = [item.center[1] for item in group]
@@ -1238,7 +1242,11 @@ class WeaponDetector:
             if self._is_accepted_group(group, confidence, scores):
                 accepted.append((region_name, group))
 
-        for method in ("opencv_slot_template_match", "cnn_real_crop_classifier", "opencv_color_template_match"):
+        for method in (
+            "opencv_slot_template_match",
+            "cnn_real_crop_classifier",
+            "opencv_color_template_match",
+        ):
             method_groups = [item for item in accepted if item[1] and item[1][0].method == method]
             if method_groups:
                 return max(method_groups, key=lambda item: self._group_score(item[1]))

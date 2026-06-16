@@ -49,4 +49,5 @@ class HealthResponse(BaseModel):
     service: str
     version: str
     templates_loaded: int
-
+    classifier_loaded: bool = False
+    classifier_labels: int = 0

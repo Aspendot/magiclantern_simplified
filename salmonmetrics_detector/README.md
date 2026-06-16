@@ -34,6 +34,12 @@ Image test:
 curl.exe -X POST http://127.0.0.1:8080/detect -F "file=@C:\Users\Amir\Downloads\1.png"
 ```
 
+Regression check against the confirmed local screenshot set:
+
+```powershell
+python tools\verify_known_screenshots.py
+```
+
 ## Cloud Run Deploy From This Folder
 
 Recommended Cloud Run settings:
@@ -77,8 +83,8 @@ If the console does not offer a source-directory field, create a new GitHub repo
 5. Multi-scale match weapon icon templates with OpenCV.
 6. Fuse grayscale shape matching with masked HSV color agreement inside the weapon pill.
 7. Prefer strict four-slot geometry when it is available.
-8. Classify extracted top-bar weapon components with the trained real-crop ONNX model when strict template slots do not resolve.
-9. Fall back to an evenly spaced row sequence only when it clears higher confidence and spacing checks.
+8. Also classify extracted top-bar weapon components with the trained real-crop ONNX model, so a bad strict template proposal cannot block a stronger classifier read.
+9. Fall back to an evenly spaced row sequence only when strict template and classifier evidence are unavailable.
 10. Return `fixed_weapons`, `random_weapons`, `uncertain`, or `not_visible`.
 
 The detector should resolve visible top-bar icons across device sizes before returning review/uncertain. It should still refuse cases where the bar is missing, severely cropped, or too degraded to support a real visual read.

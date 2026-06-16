@@ -883,10 +883,24 @@ function localWeaponHintFor(weaponHints) {
     .map((weapon) => ({
       name: normalizeWeaponName(weapon.weaponName, { allowRandom: false }),
       confidence: cleanNumber(weapon.confidence),
+      method: String(weapon.method || "").trim(),
     }));
   const hasFour = weapons.length === 4 && weapons.every((weapon) => weapon.name);
-  const highConfidence = weaponHints.confidence >= 0.74 && weapons.every((weapon) => weapon.confidence >= 0.68);
-  if (!weaponHints.needsReview && hasFour && highConfidence) {
+  const uniqueNames = new Set(weapons.map((weapon) => weapon.name)).size === weapons.length;
+  const confidence = cleanNumber(weaponHints.confidence);
+  const minSlotConfidence = weapons.reduce((min, weapon) => Math.min(min, cleanNumber(weapon.confidence)), 1);
+  const methods = new Set(weapons.map((weapon) => weapon.method).filter(Boolean));
+  let highConfidence = false;
+  if (methods.size === 1 && methods.has("opencv_slot_template_match")) {
+    highConfidence = confidence >= 0.98 && minSlotConfidence >= 0.975;
+  } else if (methods.size === 1 && methods.has("opencv_color_template_match")) {
+    highConfidence = confidence >= 0.992 && minSlotConfidence >= 0.985;
+  } else if (methods.size === 1 && methods.has("cnn_real_crop_classifier")) {
+    highConfidence = confidence >= 0.90 && minSlotConfidence >= 0.88;
+  } else {
+    highConfidence = confidence >= 0.995 && minSlotConfidence >= 0.99;
+  }
+  if (!weaponHints.needsReview && hasFour && uniqueNames && highConfidence) {
     return { mode: "fixed_weapons", weapons: weapons.map((weapon) => weapon.name) };
   }
   return null;

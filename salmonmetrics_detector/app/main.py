@@ -35,6 +35,8 @@ async def health() -> HealthResponse:
         service="salmonmetrics-detector",
         version=SERVICE_VERSION,
         templates_loaded=detector.template_count(),
+        classifier_loaded=detector.classifier_net is not None,
+        classifier_labels=len(detector.classifier_labels),
     )
 
 
@@ -50,4 +52,3 @@ async def detect(file: UploadFile = File(...)) -> DetectResponse:
         raise HTTPException(status_code=413, detail=f"file is too large; max is {MAX_UPLOAD_BYTES} bytes")
 
     return detector.detect(image_bytes)
-
