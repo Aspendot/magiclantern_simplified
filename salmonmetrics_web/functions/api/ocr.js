@@ -221,6 +221,82 @@ const EN_WEAPON_TO_JA = new Map([
   ["Random Gold", "ランダム"],
 ]);
 
+const WEAPON_KEY_TO_JA = new Map([
+  ["52gal", ".52ガロン"],
+  ["96gal", ".96ガロン"],
+  ["bamboo14mk1", "14式竹筒銃・甲"],
+  ["brella24mk1", "24式張替傘・甲"],
+  ["liter4kscope", "4Kスコープ"],
+  ["h3reelgun", "H3リールガン"],
+  ["l3reelgun", "L3リールガン"],
+  ["lact450", "LACT-450"],
+  ["nzap85", "N-ZAP85"],
+  ["rpen5h", "R-PEN/5H"],
+  ["rapidelite", "Rブラスターエリート"],
+  ["sblast92", "S-BLAST92"],
+  ["examiner", "イグザミナー"],
+  ["variableroller", "ヴァリアブルローラー"],
+  ["explosher", "エクスプロッシャー"],
+  ["furo", "オーバーフロッシャー"],
+  ["carbon", "カーボンローラー"],
+  ["gaenff", "ガエンFF"],
+  ["campingshelter", "キャンピングシェルター"],
+  ["quadhopperblack", "クアッドホッパーブラック"],
+  ["kugelschreiber", "クーゲルシュライバー"],
+  ["kumashelter", "クマサン印のシェルター"],
+  ["kumastringer", "クマサン印のストリンガー"],
+  ["kumaslosher", "クマサン印のスロッシャー"],
+  ["kumacharger", "クマサン印のチャージャー"],
+  ["kumablaster", "クマサン印のブラスター"],
+  ["kumamaneuver", "クマサン印のマニューバー"],
+  ["kumaroller", "クマサン印のローラー"],
+  ["kumawiper", "クマサン印のワイパー"],
+  ["clashblaster", "クラッシュブラスター"],
+  ["kelvin525", "ケルビン525"],
+  ["jetsweeper", "ジェットスイーパー"],
+  ["jimuwiper", "ジムワイパー"],
+  ["sharp", "シャープマーカー"],
+  ["squicleana", "スクイックリンα"],
+  ["screwslosher", "スクリュースロッシャー"],
+  ["spygadget", "スパイガジェット"],
+  ["sputtery", "スパッタリー"],
+  ["sshooter", "スプラシューター"],
+  ["splatscope", "スプラスコープ"],
+  ["splatspinner", "スプラスピナー"],
+  ["splatcharger", "スプラチャージャー"],
+  ["maneuver", "スプラマニューバー"],
+  ["splatroller", "スプラローラー"],
+  ["spaceshooter", "スペースシューター"],
+  ["soytuber", "ソイチューバー"],
+  ["dynamo", "ダイナモローラー"],
+  ["dualsweeper", "デュアルスイーパー"],
+  ["dentalwipermint", "デンタルワイパーミント"],
+  ["tristringer", "トライストリンガー"],
+  ["drivewiper", "ドライブワイパー"],
+  ["nova", "ノヴァブラスター"],
+  ["nautilus47", "ノーチラス47"],
+  ["hydra", "ハイドラント"],
+  ["bucketslosher", "バケットスロッシャー"],
+  ["pablo", "パブロ"],
+  ["parashelter", "パラシェルター"],
+  ["barrelspinner", "バレルスピナー"],
+  ["hissen", "ヒッセン"],
+  ["fincent", "フィンセント"],
+  ["prime", "プライムシューター"],
+  ["furuido", "フルイドV"],
+  ["promodelermg", "プロモデラーMG"],
+  ["bold", "ボールドマーカー"],
+  ["hokusai", "ホクサイ"],
+  ["hotblaster", "ホットブラスター"],
+  ["bottlegeyser", "ボトルガイザー"],
+  ["moprin", "モップリン"],
+  ["rapid", "ラピッドブラスター"],
+  ["liter4k", "リッター4K"],
+  ["longblaster", "ロングブラスター"],
+  ["wideroller", "ワイドローラー"],
+  ["wakaba", "わかばシューター"],
+]);
+
 const RESULT_SCHEMA = {
   type: "object",
   properties: {
@@ -1121,6 +1197,8 @@ function normalizeWeaponName(value, options = {}) {
   const text = String(value || "").normalize("NFKC").replace(/\s+/g, "").trim();
   if (!text || text === "?") return "";
   if (text.includes("ランダム") || /^random$/i.test(text)) return options.allowRandom ? "ランダム" : "";
+  const keyAlias = WEAPON_KEY_TO_JA.get(normalizeWeaponKeyToken(text));
+  if (keyAlias) return keyAlias;
   const exact = WEAPONS.find((weapon) => text === weapon.replace(/\s+/g, ""));
   if (exact) return exact;
   const aliases = [
@@ -1183,6 +1261,10 @@ function normalizeWeaponName(value, options = {}) {
     ["デンタル", "デンタルワイパーミント"],
   ];
   return aliases.find(([key]) => text.includes(key))?.[1] || "";
+}
+
+function normalizeWeaponKeyToken(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function normalizeWaveEggs(waveEggs, counts = {}) {
