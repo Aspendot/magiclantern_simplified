@@ -2251,7 +2251,7 @@ function applyOcrResult(result) {
 function applyOcrWeaponsToShift(result) {
   const weapons = normalizeOcrWeapons(result.weapons);
   const weaponSource = String(result.weaponSource || "").toLowerCase();
-  const hasTrustedWeapons = ["schedule", "known_rotation", "local_match", "manual"].includes(weaponSource)
+  const hasTrustedWeapons = ["schedule", "known_rotation", "local_match", "feedback", "manual"].includes(weaponSource)
     && weapons.length === 4
     && !hasOcrWeaponWarning(result.warnings);
   if (!hasTrustedWeapons) {
@@ -2485,6 +2485,7 @@ function weaponChipLabel(source = "") {
   if (source === "random") return "ブキ・ランダム";
   if (source === "schedule") return "ブキ・予定表";
   if (source === "known_rotation") return "ブキ・確定";
+  if (source === "feedback") return "ブキ・修正履歴";
   if (source === "manual") return "ブキ・手動修正";
   if (source === "vlm") return "ブキ・Gemini";
   return "ブキ";
@@ -2495,6 +2496,7 @@ function weaponSourceDescription(source = "") {
   if (source === "random") return "判定元: 画像内のランダム表示を検出しました。";
   if (source === "schedule") return "判定元: 現在のシフト予定表から自動入力しました。";
   if (source === "known_rotation") return "判定元: 保存済みの確定ローテーションから入力しました。";
+  if (source === "feedback") return "判定元: 以前の手動修正をこの画像に反映しました。";
   if (source === "manual") return "判定元: ユーザーが手動で修正しました。";
   if (source === "vlm") return "判定元: Geminiの画像読み取りです。間違っている場合があります。";
   return "判定元: 未確定です。";
@@ -2507,7 +2509,7 @@ function weaponSourceDescription(source = "") {
 // is captured locally so wrong reads become future training data.
 function ocrWeaponRowHtml(result) {
   const source = String(result.weaponSource || "").toLowerCase();
-  const trusted = ["schedule", "known_rotation", "manual", "local_match", "random"].includes(source);
+  const trusted = ["schedule", "known_rotation", "manual", "feedback", "local_match", "random"].includes(source);
   const weapons = Array.isArray(result.weapons) ? result.weapons.slice(0, 4) : [];
   let slots = "";
   for (let index = 0; index < 4; index += 1) {
@@ -2534,7 +2536,7 @@ function ocrWeaponRowHtml(result) {
         <span class="ocr-weapon-source">${escapeHtml(weaponSourceDescription(source))}</span>
       </div>
       <div class="ocr-weapon-slots">${slots}</div>
-      <p class="ocr-weapon-help">ブキが違う場合は、各アイコンをタップして正しいブキに修正してください。修正フィードバックは今後の学習・検出精度改善に役立ちます。ご協力お願いします。</p>
+      <p class="ocr-weapon-help">ブキが違う場合は、各アイコンをタップして正しいブキに修正してください。同じ画像には次回から修正を反映し、修正フィードバックは今後の学習・検出精度改善にも役立ちます。ご協力お願いします。</p>
     </div>
   `;
 }
@@ -2699,7 +2701,7 @@ async function submitWeaponCorrectionFeedback(result, feedback) {
     }),
   });
   state.lastFeedbackSubmission = response;
-  toast("ブキ修正フィードバックを送信しました");
+  toast("ブキ修正を保存しました。同じ画像と今後の学習に反映されます");
 }
 
 function formatOcrWarningSummary(warnings = []) {

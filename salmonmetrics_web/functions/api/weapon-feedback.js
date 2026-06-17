@@ -4,6 +4,7 @@ const MAX_STRIP_BYTES = 1_600_000;
 const MAX_FULL_BYTES = 2_400_000;
 const MAX_RECORD_BYTES = 4_500_000;
 const MAX_EXPORT_LIMIT = 1000;
+const CORRECTION_TTL_SECONDS = 60 * 60 * 24 * 180;
 
 export async function onRequestPost({ request, env }) {
   const authError = requireToken(request, env);
@@ -29,6 +30,7 @@ export async function onRequestPost({ request, env }) {
         status: "pending_import",
       },
     });
+    await storeCorrectionLookup(env, record);
 
     return jsonResponse({
       ok: true,
@@ -126,6 +128,44 @@ async function buildFeedbackRecord(body = {}) {
       notes: "",
     },
   };
+}
+
+async function storeCorrectionLookup(env, record) {
+  const correctedWeapons = cleanWeaponArray(record.correctedWeapons, "correctedWeapons");
+  if (correctedWeapons.some((weapon) => !weapon)) return;
+
+  const payload = JSON.stringify({
+    schemaVersion: 1,
+    feedbackId: record.id,
+    createdAt: record.createdAt,
+    correctedWeapons,
+    changedSlots: record.changedSlots,
+    source: {
+      weaponSource: record.source.weaponSource,
+      provider: record.source.provider,
+      model: record.source.model,
+    },
+  });
+  const metadata = {
+    feedbackId: record.id,
+    createdAt: record.createdAt,
+    status: "verified_by_user",
+  };
+
+  const writes = [];
+  if (record.images.full?.sha256) {
+    writes.push(env.WEAPON_FEEDBACK.put(`correction/full/${record.images.full.sha256}.json`, payload, {
+      expirationTtl: CORRECTION_TTL_SECONDS,
+      metadata,
+    }));
+  }
+  if (record.images.weapons?.sha256) {
+    writes.push(env.WEAPON_FEEDBACK.put(`correction/weapons/${record.images.weapons.sha256}.json`, payload, {
+      expirationTtl: CORRECTION_TTL_SECONDS,
+      metadata,
+    }));
+  }
+  await Promise.all(writes);
 }
 
 function cleanChangedSlots(rawValue, detectedWeapons, correctedWeapons) {

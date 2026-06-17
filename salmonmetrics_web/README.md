@@ -86,6 +86,11 @@ npx wrangler pages secret put WEAPON_FEEDBACK_EXPORT_TOKEN --project-name salmon
 
 Use the same value as the GitHub repository secret `WEAPON_FEEDBACK_EXPORT_TOKEN` for the scheduled retraining workflow.
 
+Corrections have two effects:
+
+- The same submitted screenshot/weapon-strip is remembered by image hash and reused immediately on future OCR as `weaponSource: "feedback"`.
+- The correction record remains queued for the detector training workflow, which imports corrected crops and promotes a new classifier only after the regression suite passes.
+
 Cloudflare will give you a free URL like `https://salmonmetrics.pages.dev`. If that project name is taken, use a more specific name:
 
 ```powershell

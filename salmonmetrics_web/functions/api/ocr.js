@@ -13,6 +13,8 @@ const DEFAULT_DETECTOR_URL = "https://salmonmetrics-detector-1067297744371.asia-
 const MAX_ATTEMPTS = 3;
 const SAME_MODEL_BASE_DELAY_MS = 650;
 const FALLBACK_DELAY_MS = 450;
+const FEEDBACK_LOOKUP_SCAN_LIMIT = 200;
+const FEEDBACK_CORRECTION_TTL_SECONDS = 60 * 60 * 24 * 180;
 
 const STAGES = [
   "アラマキ砦",
@@ -402,7 +404,8 @@ export async function onRequestPost({ request, env }) {
     // geometry; client/browser hints are deliberately not accepted here.
     const schedulePromise = fetchCoopSchedule(env).catch(() => null);
     const detectorPromise = detectWeaponsWithService(images.full, env).catch(() => null);
-    const weaponContext = { schedulePromise, detectorPromise };
+    const correctionPromise = findFeedbackCorrection(images, env).catch(() => null);
+    const weaponContext = { schedulePromise, detectorPromise, correctionPromise };
     const extraction = await extractWithGemini({ apiKey, models, images, weaponContext, debug });
     return jsonResponse(extraction);
   } catch (error) {
@@ -651,6 +654,95 @@ async function detectWeaponsWithService(image, env = {}) {
   }
 }
 
+async function findFeedbackCorrection(images, env = {}) {
+  if (!env.WEAPON_FEEDBACK) return null;
+  const keys = [];
+  const fullHash = images.full ? await imagePayloadHash(images.full) : "";
+  const weaponsHash = images.weapons ? await imagePayloadHash(images.weapons) : "";
+  if (fullHash) keys.push(`correction/full/${fullHash}.json`);
+  if (weaponsHash) keys.push(`correction/weapons/${weaponsHash}.json`);
+
+  for (const key of keys) {
+    const correction = await env.WEAPON_FEEDBACK.get(key, { type: "json" });
+    const weapons = normalizeWeapons(correction?.correctedWeapons || [], { allowRandom: true });
+    if (weapons.length === 4) {
+      return {
+        key,
+        feedbackId: String(correction.feedbackId || ""),
+        createdAt: String(correction.createdAt || ""),
+        weapons,
+      };
+    }
+  }
+  return findLegacyFeedbackCorrection(env, fullHash, weaponsHash);
+}
+
+async function findLegacyFeedbackCorrection(env, fullHash, weaponsHash) {
+  if (!fullHash && !weaponsHash) return null;
+  const listed = await env.WEAPON_FEEDBACK.list({ prefix: "feedback/", limit: FEEDBACK_LOOKUP_SCAN_LIMIT });
+  let best = null;
+  for (const item of listed.keys || []) {
+    const record = await env.WEAPON_FEEDBACK.get(item.name, { type: "json" });
+    if (!record) continue;
+    const matchesFull = fullHash && record.images?.full?.sha256 === fullHash;
+    const matchesWeapons = weaponsHash && record.images?.weapons?.sha256 === weaponsHash;
+    if (!matchesFull && !matchesWeapons) continue;
+    const weapons = normalizeWeapons(record.correctedWeapons || [], { allowRandom: true });
+    if (weapons.length !== 4) continue;
+    if (!best || String(record.createdAt || "") > String(best.createdAt || "")) {
+      best = {
+        key: item.name,
+        feedbackId: String(record.id || ""),
+        createdAt: String(record.createdAt || ""),
+        weapons,
+      };
+    }
+  }
+  if (best) {
+    await cacheFeedbackCorrection(env, best, fullHash, weaponsHash);
+  }
+  return best;
+}
+
+async function cacheFeedbackCorrection(env, correction, fullHash, weaponsHash) {
+  const payload = JSON.stringify({
+    schemaVersion: 1,
+    feedbackId: correction.feedbackId,
+    createdAt: correction.createdAt,
+    correctedWeapons: correction.weapons,
+    migratedFrom: correction.key,
+  });
+  const metadata = {
+    feedbackId: correction.feedbackId,
+    createdAt: correction.createdAt,
+    status: "verified_by_user",
+  };
+  const writes = [];
+  if (fullHash) {
+    writes.push(env.WEAPON_FEEDBACK.put(`correction/full/${fullHash}.json`, payload, {
+      expirationTtl: FEEDBACK_CORRECTION_TTL_SECONDS,
+      metadata,
+    }));
+  }
+  if (weaponsHash) {
+    writes.push(env.WEAPON_FEEDBACK.put(`correction/weapons/${weaponsHash}.json`, payload, {
+      expirationTtl: FEEDBACK_CORRECTION_TTL_SECONDS,
+      metadata,
+    }));
+  }
+  await Promise.all(writes);
+}
+
+async function imagePayloadHash(image) {
+  if (!image?.base64) return "";
+  return sha256Hex(`${image.mimeType || "image/jpeg"};${image.base64}`);
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(text || "")));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function detectorResponseToWeaponHints(detector = {}) {
   const weapons = Array.isArray(detector.weapons)
     ? detector.weapons.slice(0, 4).map((weapon, index) => ({
@@ -798,14 +890,21 @@ function normalizeResult(value = {}) {
 }
 
 async function resolveDeterministicWeapons(result, context = null) {
-  // 1) Manually verified known rotations win outright.
+  // 1) User corrections are explicit ground truth for the same submitted image.
+  const feedback = context?.correctionPromise ? await context.correctionPromise : null;
+  if (feedback?.weapons?.length === 4) {
+    applyResolvedWeapons(result, feedback.weapons, "feedback");
+    return;
+  }
+
+  // 2) Manually verified known rotations win outright.
   const known = knownRotationFor(result);
   if (known) {
     applyResolvedWeapons(result, known.weapons, "known_rotation", known.stage);
     return;
   }
 
-  // 2) Public Salmon Run schedule, keyed by the screenshot's printed play
+  // 3) Public Salmon Run schedule, keyed by the screenshot's printed play
   //    timestamp. Exact by construction.
   const scheduled = await scheduleRotationFor(result, context?.schedulePromise);
   if (scheduled) {
@@ -813,7 +912,7 @@ async function resolveDeterministicWeapons(result, context = null) {
     return;
   }
 
-  // 3) Server-side image detector. This covers old screenshots outside the public
+  // 4) Server-side image detector. This covers old screenshots outside the public
   //    current schedule window and avoids trusting browser-provided hints.
   const detected = localWeaponHintFor(context?.detectorPromise ? await context.detectorPromise : null);
   if (detected?.mode === "random_weapons") {
@@ -825,7 +924,7 @@ async function resolveDeterministicWeapons(result, context = null) {
     return;
   }
 
-  // 4) Otherwise trust Gemini's own read. Its weapon output is constrained to
+  // 5) Otherwise trust Gemini's own read. Its weapon output is constrained to
   //    the known weapon list and it sees a dedicated upscaled crop of the supply
   //    bar, so it is the recognizer for stamp-less / out-of-window screenshots.
   //    Tiny or cropped icons can't always be pinned from pixels, so a partial
@@ -836,7 +935,7 @@ async function resolveDeterministicWeapons(result, context = null) {
 
 function applyResolvedWeapons(result, weapons, source, stage = "") {
   // Schedule and known rotations legitimately contain random (Grizzco) slots.
-  const allowRandom = source === "random" || source === "schedule" || source === "known_rotation";
+  const allowRandom = source === "random" || source === "schedule" || source === "known_rotation" || source === "feedback";
   const normalizedWeapons = normalizeWeapons(weapons, { allowRandom });
   if (normalizedWeapons.length !== 4) return;
   result.weapons = normalizedWeapons;
