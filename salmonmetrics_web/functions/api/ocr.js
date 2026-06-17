@@ -1010,8 +1010,13 @@ async function resolveDeterministicWeapons(result, context = null) {
 }
 
 function applyResolvedWeapons(result, weapons, source, stage = "") {
-  // Schedule and known rotations legitimately contain random (Grizzco) slots.
-  const allowRandom = source === "random" || source === "schedule" || source === "known_rotation" || source === "feedback";
+  // Schedule, known rotations, user feedback, and trusted detector rows can
+  // legitimately contain random (Grizzco) slots.
+  const allowRandom = source === "random"
+    || source === "schedule"
+    || source === "known_rotation"
+    || source === "feedback"
+    || source === "local_match";
   const normalizedWeapons = normalizeWeapons(weapons, { allowRandom });
   if (normalizedWeapons.length !== 4) return;
   result.weapons = normalizedWeapons;
