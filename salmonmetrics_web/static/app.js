@@ -4,7 +4,7 @@ const STORAGE_CONFIG = "salmonmetrics.shiftConfig";
 const STORAGE_ANALYTICS_USER = "salmonmetrics.analyticsUser";
 const STORAGE_CLIENT = "salmonmetrics.clientId";
 const STORAGE_WEAPON_CORRECTIONS = "salmonmetrics.weaponCorrections";
-const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json";
+const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json?v=20260617d";
 const WEAPON_FUZZY_MARGIN = 0.055;
 const WEAPON_FUZZY_MIN_SCORE = 0.82;
 const GEMINI_MODEL_LABELS = new Map([

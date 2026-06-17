@@ -3,6 +3,19 @@
   "generatedAt": "2026-05-20T14:54:18.333Z",
   "weapons": [
     {
+      "key": "random",
+      "nameJa": "ランダム",
+      "nameEn": "Random",
+      "aliases": [
+        "ランダム",
+        "Random",
+        "random",
+        "?",
+        "？"
+      ],
+      "icon": "/assets/weapons/random.png"
+    },
+    {
       "key": "52gal",
       "nameJa": ".52ガロン",
       "nameEn": ".52 Gal",
