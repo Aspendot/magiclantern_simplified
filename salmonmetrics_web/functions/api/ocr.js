@@ -1053,10 +1053,13 @@ function localWeaponHintFor(weaponHints) {
   if (weaponHints.mode === "random_weapons" && weaponHints.confidence >= 0.9) {
     return { mode: "random_weapons", weapons: ["ランダム", "ランダム", "ランダム", "ランダム"] };
   }
+  const hasRandomSlot = (weaponHints.weapons || [])
+    .slice(0, 4)
+    .some((weapon) => normalizeWeaponName(weapon.weaponName, { allowRandom: true }) === "ランダム");
   const weapons = (weaponHints.weapons || [])
     .slice(0, 4)
     .map((weapon) => ({
-      name: normalizeWeaponName(weapon.weaponName, { allowRandom: false }),
+      name: normalizeWeaponName(weapon.weaponName, { allowRandom: hasRandomSlot }),
       confidence: cleanNumber(weapon.confidence),
       method: String(weapon.method || "").trim(),
     }));
@@ -1069,9 +1072,9 @@ function localWeaponHintFor(weaponHints) {
   if (methods.size === 1 && methods.has("opencv_slot_template_match")) {
     highConfidence = false;
   } else if (methods.size === 1 && methods.has("opencv_color_template_match")) {
-    highConfidence = false;
+    highConfidence = confidence >= 0.997 && minSlotConfidence >= 0.995;
   } else if (methods.size === 1 && methods.has("cnn_real_crop_classifier")) {
-    highConfidence = confidence >= 0.925 && minSlotConfidence >= 0.78;
+    highConfidence = confidence >= 0.94 && minSlotConfidence >= 0.84;
   } else {
     highConfidence = confidence >= 0.995 && minSlotConfidence >= 0.99;
   }

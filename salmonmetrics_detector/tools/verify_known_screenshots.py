@@ -34,6 +34,11 @@ DEFAULT_CASES = (
     ExpectedCase("IMG_4253.JPG", "fixed_weapons", ("bottlegeyser", "parashelter", "sharp", "squiclean_a")),
     ExpectedCase("IMG_4255.JPG", "fixed_weapons", ("spygadget", "promodeler_mg", "gaen_ff", "rapid_elite")),
     ExpectedCase("IMG_4255_weapon_crop.png", "fixed_weapons", ("spygadget", "promodeler_mg", "gaen_ff", "rapid_elite")),
+    ExpectedCase("online_1.png", "fixed_weapons", ("fincent", "52gal", "nzap85", "bamboo14mk1")),
+    ExpectedCase("online_2.png", "fixed_weapons", ("52gal", "l3reelgun", "moprin", "squiclean_a")),
+    ExpectedCase("online_3.png", "fixed_weapons", ("hissen", "sharp", "bucketslosher", "96gal")),
+    ExpectedCase("online_4.png", "fixed_weapons", ("sshooter", "kelvin525", "squiclean_a", "random")),
+    ExpectedCase("online_5.png", "fixed_weapons", ("52gal", "hotblaster", "jetsweeper", "barrelspinner")),
 )
 
 DEFAULT_NEGATIVE_CASES = (

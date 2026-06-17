@@ -15,7 +15,7 @@ from .models import Box, DetectResponse, WeaponCandidate, WeaponSlot
 from .weapon_catalog import WeaponTemplateInfo, load_weapon_catalog
 
 
-SERVICE_VERSION = "0.2.11"
+SERVICE_VERSION = "0.2.12"
 ASSETS_ROOT = Path(__file__).resolve().parents[1] / "assets"
 DEFAULT_TEMPLATE_DIR = ASSETS_ROOT / "weapon_templates"
 FALLBACK_TEMPLATE_DIR = ASSETS_ROOT / "weapons"
@@ -125,6 +125,36 @@ class WeaponDetector:
                 continue
             focused_region_name, focused_region, focused_offset = focused
             if "weapon_pill" in focused_region_name:
+                mixed_slots = self._mixed_random_weapon_slots(
+                    focused_region_name,
+                    focused_region,
+                    focused_offset,
+                )
+                if mixed_slots:
+                    scores = [slot.confidence for slot in mixed_slots]
+                    confidence = float(sum(scores) / max(1, len(scores)))
+                    return DetectResponse(
+                        ok=True,
+                        mode="fixed_weapons",
+                        confidence=round(confidence, 4),
+                        weapons=mixed_slots,
+                        needs_review=False,
+                        source="mixed_random_slot_match",
+                        debug={
+                            "region": focused_region_name,
+                            "regions": [name for name, _, _ in regions],
+                            "templates": self.template_count(),
+                            "resize_ratio": resize_ratio,
+                            "elapsed_seconds": round(time.monotonic() - started_at, 4),
+                            "accepted": True,
+                            "candidate_weapon_ids": [slot.weapon_id for slot in mixed_slots],
+                            "candidate_scores": [slot.confidence for slot in mixed_slots],
+                            "random_slots": [
+                                slot.slot for slot in mixed_slots if slot.weapon_id == "random"
+                            ],
+                        },
+                    )
+
                 component_group = self._classify_weapon_pill_components(
                     focused_region_name,
                     focused_region,
@@ -331,8 +361,12 @@ class WeaponDetector:
             if right - left >= 120 and bottom - top >= 45:
                 anchor_regions.append((f"green_anchor_{index + 1}", image[top:bottom, left:right], (left, top)))
 
-        if anchor_regions:
-            return anchor_regions
+        regions.extend(anchor_regions)
+
+        top_weapon_pill = self._top_cropped_weapon_pill_region(image)
+        if top_weapon_pill is not None:
+            top_region, top_offset = top_weapon_pill
+            regions.append(("top_cropped_weapon_pill", top_region, top_offset))
 
         cropped_weapon_row = self._cropped_weapon_row_region(image)
         if cropped_weapon_row is not None:
@@ -359,6 +393,55 @@ class WeaponDetector:
             seen.add(key)
             deduped.append((name, region, (x, y)))
         return deduped
+
+    def _top_cropped_weapon_pill_region(self, image: np.ndarray) -> tuple[np.ndarray, tuple[int, int]] | None:
+        height, width = image.shape[:2]
+        if height < 180 or width < 260:
+            return None
+
+        top_h = int(min(height * 0.22, 300))
+        top = image[:top_h]
+        gray = cv2.cvtColor(top, cv2.COLOR_BGR2GRAY)
+        dark_mask = cv2.inRange(gray, 0, 50)
+        dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, np.ones((9, 31), dtype=np.uint8))
+        contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        boxes: list[tuple[float, int, int, int, int]] = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            if area < max(1600, int(width * height * 0.0012)):
+                continue
+            if w < width * 0.28 or w > width * 0.86:
+                continue
+            if h < 26 or h > min(92, top_h * 0.58):
+                continue
+            if w / max(1, h) < 4.2:
+                continue
+            if y > top_h * 0.55:
+                continue
+
+            # Prefer the top weapon pill over lower score panels: it is wide,
+            # dark, horizontally elongated, and near the top edge in cropped
+            # screenshots.
+            score = area + w * 3.0 - y * 18.0 - abs((x + w / 2) - width * 0.48) * 0.8
+            boxes.append((score, x, y, w, h))
+
+        if not boxes:
+            return None
+
+        _, x, y, w, h = max(boxes, key=lambda item: item[0])
+        pad_x = max(2, int(w * 0.018))
+        pad_y_top = max(1, int(h * 0.04))
+        pad_y_bottom = max(2, int(h * 0.10))
+        x0 = max(0, x + pad_x)
+        y0 = max(0, y + pad_y_top)
+        x1 = min(width, x + int(w * 0.62))
+        y1 = min(top_h, y + h - pad_y_bottom)
+        region = image[y0:y1, x0:x1]
+        if region.shape[0] < 24 or region.shape[1] < 120:
+            return None
+        return region, (x0, y0)
 
     def _cropped_weapon_row_region(self, image: np.ndarray) -> tuple[np.ndarray, tuple[int, int]] | None:
         height, width = image.shape[:2]
@@ -499,6 +582,124 @@ class WeaponDetector:
                 if xs[-1] - xs[0] >= 60:
                     return True
         return False
+
+    def _mixed_random_weapon_slots(
+        self,
+        region_name: str,
+        region: np.ndarray,
+        offset: tuple[int, int],
+    ) -> list[WeaponSlot]:
+        random_slots, bounds = self._random_slot_indexes(region)
+        if not random_slots or len(random_slots) >= 4:
+            return []
+
+        candidate_pool: list[MatchCandidate] = []
+        for group in (
+            self._match_weapon_pill_even_slots(region_name, region, offset),
+            self._match_weapon_pill_slots(region_name, region, offset),
+            self._classify_weapon_pill_components(region_name, region, offset),
+            self._select_row(self._match_region(region_name, region, offset)),
+        ):
+            candidate_pool.extend(group)
+
+        by_slot: list[MatchCandidate | None] = [None, None, None, None]
+        for candidate in candidate_pool:
+            slot_index = self._candidate_slot_index(candidate, bounds, offset)
+            if slot_index is None or slot_index in random_slots:
+                continue
+            if candidate.method.startswith("opencv") and candidate.score < 0.985:
+                continue
+            if candidate.method == "cnn_real_crop_classifier" and candidate.score < 0.86:
+                continue
+            previous = by_slot[slot_index]
+            if previous is None or candidate.score > previous.score:
+                by_slot[slot_index] = candidate
+
+        seen_weapon_ids: set[str] = set()
+        slots: list[WeaponSlot] = []
+        for slot_index in range(4):
+            slot_number = slot_index + 1
+            if slot_index in random_slots:
+                x0 = bounds[slot_index]
+                x1 = bounds[slot_index + 1]
+                slots.append(
+                    WeaponSlot(
+                        slot=slot_number,
+                        weapon_id="random",
+                        weapon_name_ja="ランダム",
+                        weapon_name_en="Random",
+                        confidence=1.0,
+                        method="green_question_mark_detection",
+                        box=Box(x=offset[0] + x0, y=offset[1], w=max(1, x1 - x0), h=region.shape[0]),
+                    )
+                )
+                continue
+
+            candidate = by_slot[slot_index]
+            if candidate is None:
+                return []
+            weapon_id = candidate.template.info.weapon_id
+            if weapon_id in seen_weapon_ids:
+                return []
+            seen_weapon_ids.add(weapon_id)
+            slots.append(self._slot_from_candidate(slot_number, candidate))
+
+        return slots if len(slots) == 4 else []
+
+    def _random_slot_indexes(self, region: np.ndarray) -> tuple[set[int], list[int]]:
+        span = self._component_slot_span(region)
+        if span is None:
+            foreground = self._pill_foreground_mask(region)
+            geometry = self._slot_geometry_from_foreground(foreground)
+            if geometry is None:
+                return set(), [0, 0, 0, 0, region.shape[1]]
+            _, bounds = geometry
+        else:
+            x0, x1, _, _ = span
+            width = x1 - x0
+            bounds = [int(round(x0 + width * index / 4)) for index in range(5)]
+
+        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, np.array([44, 100, 105]), np.array([88, 255, 255]))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        region_h, region_w = region.shape[:2]
+        min_area = max(80, int(region_h * region_w * 0.018))
+        slots: set[int] = set()
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            if area < min_area:
+                continue
+            if h < region_h * 0.32 or w < region_w * 0.045:
+                continue
+            ratio = w / max(1, h)
+            if not (0.35 <= ratio <= 1.85):
+                continue
+            center_x = x + w / 2
+            slot_index = self._slot_index_from_local_x(center_x, bounds)
+            if slot_index is not None:
+                slots.add(slot_index)
+        return slots, bounds
+
+    @staticmethod
+    def _candidate_slot_index(
+        candidate: MatchCandidate,
+        bounds: list[int],
+        offset: tuple[int, int],
+    ) -> int | None:
+        return WeaponDetector._slot_index_from_local_x(candidate.center[0] - offset[0], bounds)
+
+    @staticmethod
+    def _slot_index_from_local_x(local_x: float, bounds: list[int]) -> int | None:
+        if len(bounds) != 5:
+            return None
+        for index in range(4):
+            pad = max(2.0, (bounds[index + 1] - bounds[index]) * 0.20)
+            if bounds[index] - pad <= local_x <= bounds[index + 1] + pad:
+                return index
+        return None
 
     def _match_region(self, region_name: str, region: np.ndarray, offset: tuple[int, int]) -> list[MatchCandidate]:
         if not self.templates:
@@ -982,6 +1183,9 @@ class WeaponDetector:
             boxes.append((x, y, w, h, pixels))
 
         boxes = self._split_wide_component_boxes(foreground, boxes)
+        non_edge_boxes = [box for box in boxes if box[0] > 2]
+        if len(non_edge_boxes) >= 4:
+            boxes = non_edge_boxes
         if len(boxes) < 4:
             return []
 
@@ -1005,8 +1209,21 @@ class WeaponDetector:
                 continue
             gap_cv = float(np.std(gaps) / max(1.0, np.mean(gaps)))
             area_score = float(sum(item[4] for item in ordered))
+            component_areas = [item[4] for item in ordered]
+            median_component_area = float(np.median(component_areas))
+            max_component_area = float(max(component_areas))
+            outlier_area_penalty = max(
+                0.0,
+                (max_component_area / max(1.0, median_component_area) - 2.2) * 500.0,
+            )
             edge_penalty = 850.0 if ordered[0][0] <= 1 else 0.0
-            score = area_score + min(120.0, span / max(1.0, region_w) * 160.0) - gap_cv * 500.0 - edge_penalty
+            score = (
+                area_score
+                + min(120.0, span / max(1.0, region_w) * 160.0)
+                - gap_cv * 500.0
+                - edge_penalty
+                - outlier_area_penalty
+            )
             ranked_groups.append((score, ordered))
 
         ranked_groups.sort(key=lambda item: item[0], reverse=True)
@@ -1508,7 +1725,13 @@ class WeaponDetector:
             return False
 
         # Must be on the same visual row.
-        if y_spread > max(14.0, median_h * 0.85):
+        y_spread_limit = max(14.0, median_h * 0.85)
+        if method == "cnn_real_crop_classifier" and group[0].region_name == "top_cropped_weapon_pill":
+            # In screenshots cropped just above the weapon pill, some weapons
+            # sit visibly higher inside the pill while still belonging to the
+            # same supply row.
+            y_spread_limit = max(22.0, median_h * 1.60)
+        if y_spread > y_spread_limit:
             return False
 
         # Reject duplicate/overlapping boxes.
@@ -1538,14 +1761,13 @@ class WeaponDetector:
                 if area < median_area * 0.18:
                     return False
 
-            return confidence >= 0.925 and min(scores) >= 0.78
+            return confidence >= 0.94 and min(scores) >= 0.84
 
         if method == "opencv_color_template_match":
             # Loose whole-pill matching can assign very high scores to tiny
-            # fragments. Keep it only as debug evidence; final answers must
-            # come from slot geometry, component classification, or random
-            # question-mark detection.
-            return False
+            # fragments. Promote it only when all four independent matches are
+            # extremely strong and pass the geometry checks above.
+            return confidence >= 0.997 and min(scores) >= 0.995
 
         return False
 
@@ -1592,20 +1814,20 @@ class WeaponDetector:
     def _to_slots(self, matches: list[MatchCandidate]) -> list[WeaponSlot]:
         slots: list[WeaponSlot] = []
         for index, match in enumerate(matches[:4], start=1):
-            similar = self._similar_candidates(match)
-            slots.append(
-                WeaponSlot(
-                    slot=index,
-                    weapon_id=match.template.info.weapon_id,
-                    weapon_name_ja=match.template.info.name_ja,
-                    weapon_name_en=match.template.info.name_en,
-                    confidence=round(max(0, min(1, match.score)), 4),
-                    method=match.method,
-                    box=Box(x=match.x, y=match.y, w=match.w, h=match.h),
-                    candidates=similar,
-                )
-            )
+            slots.append(self._slot_from_candidate(index, match))
         return slots
+
+    def _slot_from_candidate(self, slot: int, match: MatchCandidate) -> WeaponSlot:
+        return WeaponSlot(
+            slot=slot,
+            weapon_id=match.template.info.weapon_id,
+            weapon_name_ja=match.template.info.name_ja,
+            weapon_name_en=match.template.info.name_en,
+            confidence=round(max(0, min(1, match.score)), 4),
+            method=match.method,
+            box=Box(x=match.x, y=match.y, w=match.w, h=match.h),
+            candidates=self._similar_candidates(match),
+        )
 
     def _similar_candidates(self, match: MatchCandidate) -> list[WeaponCandidate]:
         # The first phase returns the accepted candidate. A later Cloud Run revision
