@@ -30,6 +30,7 @@ export async function onRequestPost({ request, env }) {
         status: "pending_import",
       },
     });
+    await assertStoredFeedbackRecord(env, key, record.id);
     await storeCorrectionLookup(env, record);
 
     return jsonResponse({
@@ -41,6 +42,13 @@ export async function onRequestPost({ request, env }) {
     });
   } catch (error) {
     return jsonResponse({ ok: false, error: error.message || String(error) }, { status: 400 });
+  }
+}
+
+async function assertStoredFeedbackRecord(env, key, expectedId) {
+  const stored = await env.WEAPON_FEEDBACK.get(key, { type: "json" }).catch(() => null);
+  if (stored?.id !== expectedId) {
+    throw new Error("feedback storage verification failed");
   }
 }
 

@@ -2673,7 +2673,10 @@ function recordWeaponCorrection(result, slot, previous, corrected, correctedWeap
   state.weaponFeedbackQueue = (state.weaponFeedbackQueue || Promise.resolve())
     .catch(() => {})
     .then(() => submitWeaponCorrectionFeedback(result, feedback))
-    .catch(() => {});
+    .catch((error) => {
+      state.lastFeedbackSubmission = { ok: false, error: error.message || String(error) };
+      toast("ブキ修正は画面に反映しましたが、フィードバック保存に失敗しました");
+    });
 }
 
 async function submitWeaponCorrectionFeedback(result, feedback) {
