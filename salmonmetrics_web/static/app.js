@@ -4,7 +4,7 @@ const STORAGE_CONFIG = "salmonmetrics.shiftConfig";
 const STORAGE_ANALYTICS_USER = "salmonmetrics.analyticsUser";
 const STORAGE_CLIENT = "salmonmetrics.clientId";
 const STORAGE_WEAPON_CORRECTIONS = "salmonmetrics.weaponCorrections";
-const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json?v=20260617d";
+const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json?v=20260617e";
 const WEAPON_FUZZY_MARGIN = 0.055;
 const WEAPON_FUZZY_MIN_SCORE = 0.82;
 const GEMINI_MODEL_LABELS = new Map([
@@ -97,6 +97,10 @@ const DAY_ONLY = "昼のみ";
 const NIGHT_INCLUDED = "夜あり";
 const UNCLASSIFIED = "未分類";
 const APP_TIME_ZONE = "Asia/Tokyo";
+const MODE_STANDARD = "STANDARD";
+const MODE_BIG_RUN = "BIG_RUN";
+const MODE_CONTEST = "CONTEST";
+const RANDOM_WEAPON_NAME = "ランダム";
 const DAY_NIGHT_NOTE_PATTERN = /\[(昼のみ|夜あり)\]|(?:記録条件|昼夜区分|昼夜)[:：\s]*(昼のみ|夜あり)/;
 const OCR_STAGE_PATTERNS = [
   { stage: "アラマキ砦", keys: ["アラマキ", "アラマキ砦"] },
@@ -212,8 +216,10 @@ const elements = {
   stageSummaryList: $("#stageSummaryList"),
   stageSummaryCount: $("#stageSummaryCount"),
   recentStandard: $("#recentStandard"),
+  recentBigRun: $("#recentBigRun"),
   contestRanking: $("#contestRanking"),
   standardCount: $("#standardCount"),
+  bigRunCount: $("#bigRunCount"),
   contestCount: $("#contestCount"),
   stageSelect: $("#stageSelect"),
   weaponRow: $("#weaponRow"),
@@ -302,6 +308,44 @@ function activateView(view) {
   });
 }
 
+function normalizeMode(value, stage = "") {
+  const mode = String(value || "").trim().toUpperCase();
+  if (mode === MODE_CONTEST) return MODE_CONTEST;
+  if (mode === MODE_BIG_RUN || fullStageName(stage) === "ビッグラン") return MODE_BIG_RUN;
+  return MODE_STANDARD;
+}
+
+function isContestMode(mode) {
+  return normalizeMode(mode) === MODE_CONTEST;
+}
+
+function isBigRunMode(mode) {
+  return normalizeMode(mode) === MODE_BIG_RUN;
+}
+
+function isStandardLikeMode(mode) {
+  return !isContestMode(mode);
+}
+
+function selectedOcrMode() {
+  return normalizeMode(elements.ocrMode.value, elements.ocrStageSelect.value);
+}
+
+function modeLabel(mode) {
+  const normalized = normalizeMode(mode);
+  if (normalized === MODE_CONTEST) return "コンテスト";
+  if (normalized === MODE_BIG_RUN) return "ビッグラン";
+  return "通常";
+}
+
+function previewTargetForMode(mode) {
+  return isContestMode(mode) ? elements.contestPreview : elements.standardPreview;
+}
+
+function randomWeaponSet() {
+  return [RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME];
+}
+
 function wireForms() {
   elements.standardForm.addEventListener("submit", (event) => submitEntry(event, "STANDARD"));
   elements.contestForm.addEventListener("submit", (event) => submitEntry(event, "CONTEST"));
@@ -325,6 +369,7 @@ function wireInputs() {
   elements.ocrClearButton.addEventListener("click", resetOcrPanel);
   elements.ocrApplyButton.addEventListener("click", copyOcrToEntryForm);
   elements.recentStandard.addEventListener("click", handleDeleteClick);
+  elements.recentBigRun.addEventListener("click", handleDeleteClick);
   elements.contestRanking.addEventListener("click", handleDeleteClick);
   elements.ocrMode.addEventListener("change", () => {
     clearOcrNeedsCheck(elements.ocrMode);
@@ -458,7 +503,7 @@ async function submitEntry(event, mode) {
     localStorage.setItem(STORAGE_USER, userName);
     ensureUserOption(userName);
     resetEntryForm(form);
-    renderPreview(form, mode === "STANDARD" ? elements.standardPreview : elements.contestPreview);
+    renderPreview(form, previewTargetForMode(payload.mode));
     toast(`送信完了 · Dr ${formatPercent(submittedMetrics.dr)} · DPK ${submittedMetrics.dpk.toFixed(2)}`);
     await loadLogs();
     renderUsers();
@@ -483,7 +528,7 @@ async function submitOcrEntry(event) {
     return;
   }
 
-  const mode = elements.ocrMode.value === "CONTEST" ? "CONTEST" : "STANDARD";
+  const mode = selectedOcrMode();
   const missing = missingOcrRequiredFields(mode);
   if (missing.length) {
     toast(`${missing.join("・")} を確認してください`);
@@ -522,16 +567,17 @@ async function submitOcrEntry(event) {
 
 function entryPayload(form, mode, userName) {
   const counts = readCounts(form);
+  const effectiveMode = mode === MODE_CONTEST ? MODE_CONTEST : normalizeMode(mode, state.config.stage);
   const payload = {
-    mode,
+    mode: effectiveMode,
     userName,
     notes: form.elements.notes?.value.trim() || "",
     counts,
-    weapons: normalizeConfig(state.config).weapons,
+    weapons: isBigRunMode(effectiveMode) ? randomWeaponSet() : normalizeConfig(state.config).weapons,
     recordId: createRecordId(),
     clientId: currentClientId(),
   };
-  if (mode === "STANDARD") {
+  if (isStandardLikeMode(effectiveMode)) {
     payload.stage = state.config.stage;
     payload.playStyle = form.elements.playStyle?.value || "";
     payload.stampedAt = form.elements.stampedAt?.value || "";
@@ -546,8 +592,10 @@ function entryPayload(form, mode, userName) {
 
 function ocrPayload(mode, userName) {
   const counts = readCounts(elements.ocrForm);
+  const stage = elements.ocrStageSelect.value;
+  const effectiveMode = normalizeMode(mode, stage);
   const payload = {
-    mode,
+    mode: effectiveMode,
     userName,
     notes: elements.ocrForm.elements.notes?.value.trim() || "",
     counts,
@@ -556,12 +604,12 @@ function ocrPayload(mode, userName) {
     recordId: createRecordId(),
     clientId: currentClientId(),
   };
-  if (mode === "STANDARD") {
-    payload.stage = elements.ocrStageSelect.value;
+  if (isStandardLikeMode(effectiveMode)) {
+    payload.stage = stage;
     payload.playStyle = elements.ocrForm.elements.playStyle?.value || "";
     payload.dayNight = elements.ocrDayNight.value || DAY_ONLY;
   } else {
-    payload.stage = elements.ocrStageSelect.value;
+    payload.stage = stage;
     payload.round = elements.ocrRound.value || "第1回";
   }
   return payload;
@@ -590,6 +638,9 @@ function ocrSubmissionWeapons() {
   const ocrWeapons = normalizeOcrWeapons(state.ocrWeapons);
   if (ocrWeapons.length === 4 && !normalizeOcrWarnings(state.ocrWarnings).includes("ブキ")) {
     return ocrWeapons;
+  }
+  if (isBigRunMode(selectedOcrMode())) {
+    return randomWeaponSet();
   }
   return normalizeConfig(state.config).weapons;
 }
@@ -623,11 +674,11 @@ function missingOcrRequiredFields(mode) {
   ) {
     missing.push("ステージ");
   }
-  if (mode === "STANDARD" && !String(form.elements.playStyle?.value || "").trim()) {
+  if (isStandardLikeMode(mode) && !String(form.elements.playStyle?.value || "").trim()) {
     missing.push("プレイスタイル");
   }
   if (
-    mode === "CONTEST"
+    isContestMode(mode)
     && (!elements.ocrRound.value || elements.ocrRound.classList.contains("needs-check"))
   ) {
     missing.push("開催回");
@@ -722,6 +773,9 @@ async function saveShiftConfig(event) {
       form.elements.weapon4.value.trim(),
     ],
   };
+  if (fullStageName(config.stage) === "ビッグラン") {
+    config.weapons = randomWeaponSet();
+  }
 
   const button = $("button[type='submit']", form);
   const originalText = button.textContent;
@@ -899,22 +953,28 @@ function renderAnalytics() {
   const selectedUser = elements.analyticsUser.value || "すべて";
   elements.analyticsScope.textContent = selectedUser === "すべて" ? "全員の記録" : `${selectedUser} の記録`;
   const standard = state.logs
-    .filter((log) => modeOf(log) === "STANDARD")
+    .filter((log) => modeOf(log) === MODE_STANDARD)
+    .filter((log) => selectedUser === "すべて" || String(log[FIELD.user]) === selectedUser);
+  const bigRun = state.logs
+    .filter((log) => modeOf(log) === MODE_BIG_RUN)
     .filter((log) => selectedUser === "すべて" || String(log[FIELD.user]) === selectedUser);
   const shiftStandard = currentShiftData(standard);
   const contest = state.logs
-    .filter((log) => modeOf(log) === "CONTEST")
+    .filter((log) => modeOf(log) === MODE_CONTEST)
     .filter((log) => selectedUser === "すべて" || String(log[FIELD.user]) === selectedUser);
+  const bigRunBest = bigRun.reduce((best, log) => Math.max(best, numberFrom(log[FIELD.totalEggs])), 0);
 
   elements.statGrid.innerHTML = [
     statCard("Dr", formatMetricAverage(standard, "Dr", true), `Shift ${formatMetricAverage(shiftStandard, "Dr", true)}`),
     statCard("BSKr", formatMetricAverage(standard, "BSKr", true), `Shift ${formatMetricAverage(shiftStandard, "BSKr", true)}`),
     statCard("OKr", formatMetricAverage(standard, "OKr", true), `Shift ${formatMetricAverage(shiftStandard, "OKr", true)}`),
     statCard("DPK", formatMetricAverage(standard, "DPK", false), `${standard.length} runs`),
+    statCard("Big Run", bigRunBest ? formatWhole(bigRunBest) : "--", `${bigRun.length} runs`),
   ].join("");
 
   renderStageSummary(standard);
   renderStandardRecords(standard);
+  renderBigRunRecords(bigRun);
   renderContestRecords(contest);
 }
 
@@ -967,6 +1027,39 @@ function renderStandardRecords(records) {
         <div class="record-actions">
           <div class="record-metric">${dpk}</div>
           ${deleteButton}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderBigRunRecords(records) {
+  const sorted = [...records].sort((a, b) => dateValue(b) - dateValue(a)).slice(0, 200);
+  elements.bigRunCount.textContent = String(records.length);
+  if (!sorted.length) {
+    elements.recentBigRun.innerHTML = emptyRow("No Big Run records");
+    return;
+  }
+  elements.recentBigRun.innerHTML = sorted.map((log) => {
+    const date = formatDate(parseDate(log[FIELD.date])) || escapeHtml(String(log[FIELD.date] || ""));
+    const stage = escapeHtml(String(log[FIELD.stage] || "ビッグラン"));
+    const user = escapeHtml(String(log[FIELD.user] || "--"));
+    const eggs = numberFrom(log[FIELD.totalEggs]).toFixed(0);
+    const dr = formatPercent(numberFrom(log.Dr));
+    const dpk = numberFrom(log.DPK).toFixed(2);
+    const dayNight = escapeHtml(dayNightOf(log));
+    const weapons = weaponsOf(log);
+    const weaponLine = weapons ? `<span class="record-weapons">${weaponIconsHtml(weapons)}</span>` : "";
+    return `
+      <article class="record-row">
+        <div>
+          <strong>${date} · ${stage}</strong>
+          <span>${user} · ${dayNight} · 納品 ${eggs} · Dr ${dr}</span>
+          ${weaponLine}
+        </div>
+        <div class="record-actions">
+          <div class="record-metric">${dpk}</div>
+          ${deleteButtonHtml(log)}
         </div>
       </article>
     `;
@@ -1428,7 +1521,7 @@ function formatMetricAverage(records, key, percent) {
 }
 
 function modeOf(log) {
-  return String(log[FIELD.mode] || "").toUpperCase();
+  return normalizeMode(log[FIELD.mode], log[FIELD.stage]);
 }
 
 function numberFrom(value) {
@@ -1881,10 +1974,10 @@ function downscaleImageDataUrl(dataUrl, maxSide = 1800) {
 }
 
 function normalizeSmartOcrResult(result, meta = {}) {
-  const mode = String(result.mode || "").toUpperCase() === "CONTEST" ? "CONTEST" : "STANDARD";
   const counts = result.counts || {};
   const waveEggs = Array.isArray(result.waveEggs) ? result.waveEggs.map(numberFrom) : [];
   const stage = result.stage ? fullStageName(result.stage) : "";
+  const mode = normalizeMode(result.mode, stage);
   const dayNight = String(result.dayNight || "").includes("夜") ? NIGHT_INCLUDED : DAY_ONLY;
   const normalized = {
     provider: meta.provider || "gemini-vlm",
@@ -1916,7 +2009,7 @@ function normalizeSmartOcrResult(result, meta = {}) {
     },
     warnings: normalizeOcrWarnings(Array.isArray(result.warnings) ? result.warnings.map(String) : []),
   };
-  const expectedWaves = mode === "CONTEST" ? 5 : 3;
+  const expectedWaves = isContestMode(mode) ? 5 : 3;
   const waveTotal = waveEggs.slice(0, expectedWaves).reduce((sum, value) => sum + value, 0);
   if (!normalized.counts.totalEggs && waveEggs.length >= expectedWaves && waveTotal > 0) {
     normalized.counts.totalEggs = waveTotal;
@@ -1968,11 +2061,11 @@ function parseBattleScreenshotText(text) {
   const normalized = normalizeOcrText(text);
   const compact = compactOcrText(normalized);
   const waveEggs = extractWaveEggs(normalized);
-  const mode = inferOcrMode(compact, waveEggs);
   const stage = inferOcrStage(compact);
+  const mode = normalizeMode(inferOcrMode(compact, waveEggs), stage);
   const stampedAt = extractOcrTimestamp(normalized);
   const xNumbers = extractXNumbers(normalized);
-  const expectedWaves = mode === "CONTEST" ? 5 : 3;
+  const expectedWaves = isContestMode(mode) ? 5 : 3;
   const waveTotal = waveEggs.slice(0, expectedWaves).reduce((sum, value) => sum + value, 0);
   const hasEnoughWaves = waveEggs.length >= expectedWaves;
   const totalEggs = hasEnoughWaves ? waveTotal : 0;
@@ -2029,15 +2122,18 @@ function compactOcrText(text) {
 }
 
 function inferOcrMode(compactText, waveEggs) {
+  if (compactText.includes("ビッグラン")) {
+    return MODE_BIG_RUN;
+  }
   if (
     compactText.includes("バイトチームコンテスト")
     || compactText.includes("チームコンテスト")
     || compactText.includes("コンテスト")
     || waveEggs.length >= 5
   ) {
-    return "CONTEST";
+    return MODE_CONTEST;
   }
-  return "STANDARD";
+  return MODE_STANDARD;
 }
 
 function inferOcrStage(compactText) {
@@ -2187,7 +2283,7 @@ function ocrWarnings(result) {
   if (!result.totalEggs) warnings.push("納品数");
   if (!result.firstPlayer.myEggs || !result.firstPlayer.myRed) warnings.push("自分の数値");
   if (result.bossCounts.length < 4) warnings.push("処理数");
-  if (result.mode === "CONTEST") warnings.push("開催回");
+  if (isContestMode(result.mode)) warnings.push("開催回");
   return [...new Set(warnings)];
 }
 
@@ -2201,16 +2297,17 @@ function ocrWarningsFromNormalized(result) {
   if ([result.counts.myKills, result.counts.p2Kills, result.counts.p3Kills, result.counts.p4Kills].some((value) => !value)) {
     warnings.push("処理数");
   }
-  if (result.mode === "CONTEST") warnings.push("開催回");
+  if (isContestMode(result.mode)) warnings.push("開催回");
   return normalizeOcrWarnings([...(result.warnings || []), ...warnings]);
 }
 
 function applyOcrResult(result) {
-  const mode = result.mode === "CONTEST" ? "CONTEST" : "STANDARD";
+  const mode = normalizeMode(result.mode, result.stage);
+  result.mode = mode;
   const form = elements.ocrForm;
   activateView("ocr");
   clearOcrFields(form, mode);
-  const fallbackStage = mode === "STANDARD" && !result.stage ? inferStageFromConfiguredShift(result) : "";
+  const fallbackStage = isStandardLikeMode(mode) && !result.stage ? inferStageFromConfiguredShift(result) : "";
   if (fallbackStage) {
     result.stage = fallbackStage;
     result.warnings = normalizeOcrWarnings([...(result.warnings || []), "ステージ推定"]);
@@ -2223,7 +2320,7 @@ function applyOcrResult(result) {
   elements.ocrStageSelect.value = "";
   if (result.stage) elements.ocrStageSelect.value = fullStageName(result.stage);
   if (form.elements.playStyle) form.elements.playStyle.value = "";
-  if (mode === "CONTEST" && result.round) elements.ocrRound.value = result.round;
+  if (isContestMode(mode) && result.round) elements.ocrRound.value = result.round;
   elements.ocrDayNight.value = result.dayNight === NIGHT_INCLUDED ? NIGHT_INCLUDED : DAY_ONLY;
 
   fillNumber(form, "totalEggs", result.counts.totalEggs);
@@ -2240,7 +2337,7 @@ function applyOcrResult(result) {
     form.elements.stampedAt.value = datetimeLocal(new Date());
   }
 
-  if (mode === "CONTEST") {
+  if (isContestMode(mode)) {
     [1, 2, 3, 4, 5].forEach((wave) => fillNumber(form, `w${wave}`, result.counts[`w${wave}`]));
   }
 
@@ -2354,7 +2451,7 @@ function clearOcrFields(form, mode) {
   if (form === elements.ocrForm) {
     state.ocrWarnings = [];
   }
-  if (mode === "STANDARD" && form === elements.standardForm) setStandardDayNightValue(DAY_ONLY);
+  if (isStandardLikeMode(mode) && form === elements.standardForm) setStandardDayNightValue(DAY_ONLY);
   $$("input, select, textarea", form).forEach((field) => field.classList.remove("needs-check"));
 }
 
@@ -2390,7 +2487,8 @@ function markOcrWarnings(result) {
 }
 
 function syncOcrModeUi() {
-  const isContest = elements.ocrMode.value === "CONTEST";
+  const mode = selectedOcrMode();
+  const isContest = isContestMode(mode);
   $$(".ocr-standard-only", elements.ocrForm).forEach((item) => {
     item.hidden = isContest;
   });
@@ -2398,13 +2496,13 @@ function syncOcrModeUi() {
     item.hidden = !isContest;
   });
   elements.ocrDayNight.disabled = isContest;
-  elements.ocrApplyButton.textContent = isContest ? "コンテストへ反映" : "通常へ反映";
+  elements.ocrApplyButton.textContent = isContest ? "コンテストへ反映" : (isBigRunMode(mode) ? "ビッグランへ反映" : "通常へ反映");
 }
 
 function copyOcrToEntryForm() {
-  const mode = elements.ocrMode.value === "CONTEST" ? "CONTEST" : "STANDARD";
+  const mode = selectedOcrMode();
   const source = elements.ocrForm;
-  const target = mode === "CONTEST" ? elements.contestForm : elements.standardForm;
+  const target = isContestMode(mode) ? elements.contestForm : elements.standardForm;
   clearOcrFields(target, mode);
 
   [
@@ -2434,8 +2532,13 @@ function copyOcrToEntryForm() {
     target.elements.notes.value = source.elements.notes.value;
   }
 
-  if (mode === "STANDARD") {
-    state.config = normalizeConfig({ ...state.config, stage: elements.ocrStageSelect.value });
+  if (isStandardLikeMode(mode)) {
+    const selectedStage = elements.ocrStageSelect.value || (isBigRunMode(mode) ? "ビッグラン" : "");
+    state.config = normalizeConfig({
+      ...state.config,
+      stage: selectedStage,
+      weapons: isBigRunMode(mode) ? randomWeaponSet() : state.config.weapons,
+    });
     renderConfig();
     if (target.elements.playStyle) target.elements.playStyle.value = source.elements.playStyle.value;
     setStandardDayNightValue(elements.ocrDayNight.value);
@@ -2444,18 +2547,18 @@ function copyOcrToEntryForm() {
     elements.contestRound.value = elements.ocrRound.value;
   }
 
-  renderPreview(target, mode === "CONTEST" ? elements.contestPreview : elements.standardPreview);
-  activateView(mode === "CONTEST" ? "contest" : "standard");
+  renderPreview(target, previewTargetForMode(mode));
+  activateView(isContestMode(mode) ? "contest" : "standard");
   toast("フォームへ反映しました");
 }
 
 function renderOcrResult(result) {
-  const modeLabel = result.mode === "CONTEST" ? "コンテスト" : "通常";
+  const displayModeLabel = modeLabel(result.mode);
   const warningText = formatOcrWarningSummary(result.warnings || []);
   const weaponWarning = result.weapons?.length !== 4 || normalizeOcrWarnings(result.warnings || []).includes("ブキ");
   const chips = [
     ocrChip("モデル", displayGeminiModelName(result.model) || "Gemini VLM"),
-    ocrChip("種別", modeLabel),
+    ocrChip("種別", displayModeLabel),
     ocrChip("ステージ", result.stage || "未読取", !result.stage),
     ocrChip(weaponChipLabel(result.weaponSource), result.weapons?.length === 4 ? result.weapons.join(" / ") : "手動入力", weaponWarning),
     ocrChip("時刻", result.stampedAt ? result.stampedAt.replace("T", " ") : "未読取", !result.stampedAt),
@@ -2465,7 +2568,7 @@ function renderOcrResult(result) {
     ocrChip("赤イクラ", result.counts.myRed && result.counts.totalRed ? `${result.counts.myRed} / ${result.counts.totalRed}` : "未読取", !result.counts.myRed || !result.counts.totalRed),
     ocrChip("確認", warningText || "OK", Boolean(warningText)),
   ];
-  if (result.mode === "STANDARD") {
+  if (isStandardLikeMode(result.mode)) {
     chips.splice(3, 0, ocrChip("条件", result.dayNight));
   } else {
     chips.splice(3, 0, ocrChip("開催回", result.round || "手動選択", !result.round));

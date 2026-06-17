@@ -15,6 +15,10 @@ const SAME_MODEL_BASE_DELAY_MS = 650;
 const FALLBACK_DELAY_MS = 450;
 const FEEDBACK_LOOKUP_SCAN_LIMIT = 200;
 const FEEDBACK_CORRECTION_TTL_SECONDS = 60 * 60 * 24 * 180;
+const MODE_STANDARD = "STANDARD";
+const MODE_BIG_RUN = "BIG_RUN";
+const MODE_CONTEST = "CONTEST";
+const RANDOM_WEAPON_NAME = "ランダム";
 
 const STAGES = [
   "アラマキ砦",
@@ -300,7 +304,7 @@ const WEAPON_KEY_TO_JA = new Map([
 const RESULT_SCHEMA = {
   type: "object",
   properties: {
-    mode: { type: "string", enum: ["STANDARD", "CONTEST"] },
+    mode: { type: "string", enum: ["STANDARD", "BIG_RUN", "CONTEST"] },
     stage: { type: "string", enum: [...STAGES, ""] },
     round: { type: "string" },
     stampedAt: { type: "string" },
@@ -311,7 +315,7 @@ const RESULT_SCHEMA = {
     },
     weapons: {
       type: "array",
-      items: { type: "string", enum: [...WEAPONS, ""] },
+      items: { type: "string", enum: [...WEAPONS, RANDOM_WEAPON_NAME, ""] },
     },
     counts: {
       type: "object",
@@ -365,7 +369,7 @@ warnings はできるだけ次の短いラベルだけを使ってください:
 
 出力スキーマ:
 {
-  "mode": "STANDARD" | "CONTEST",
+  "mode": "STANDARD" | "BIG_RUN" | "CONTEST",
   "stage": "アラマキ砦" | "シェケナダム" | "ムニ・エール海洋発電所" | "難破船ドン・ブラコ" | "すじこジャンクション跡" | "トキシラズいぶし工房" | "どんぴこ闘技場" | "ビッグラン" | "",
   "round": "",
   "stampedAt": "YYYY-MM-DDTHH:mm",
@@ -395,11 +399,12 @@ warnings はできるだけ次の短いラベルだけを使ってください:
 - 画像内のゲーム画面上部左の日時ラベルを stampedAt にする。現在時刻ではない。
 - 通常の投稿時刻はフロントエンド側で現在時刻に置き換えるので、ここでは画像内の時刻だけを読む。
 - 上部中央が「いつものバイト」なら mode は STANDARD。
+- 上部中央が「ビッグラン」なら mode は BIG_RUN。
 - 上部中央が「バイトチームコンテスト」なら mode は CONTEST。
 - ビッグラン会場名が見えた場合、stage は会場名ではなく「ビッグラン」にする。
 - コンテストでも上部右の黒いステージラベルを読んで stage に入れる。コンテストだから stage を空にしない。
 - コンテストの開催回はスクショから基本的に分からないので round は ""、warnings に「開催回確認」を入れる。
-- stage が「ビッグラン」なら mode は必ず STANDARD。ビッグランを CONTEST として扱わない。
+- stage が「ビッグラン」なら mode は必ず BIG_RUN。ビッグランを STANDARD/CONTEST として扱わない。
 - プレイスタイル（野良/パーティー等）はスクショから確定できない。warnings には入れない。フロント側でユーザーに手動選択させる。
 
 ステージ判定:
@@ -413,7 +418,8 @@ warnings はできるだけ次の短いラベルだけを使ってください:
 - weapons は必ず左から順番に4要素。確信できない位置は "" にする。
 - 4つすべてを高い確信で読めた場合だけ正式ブキ名を入れる。1つでも不確実ならその位置は "" にし、warnings に「ブキ確認」を入れる。
 - 亜種やコラボ名ではなく、サーモンランで使うメインブキ名に正規化する。例: スプラシューターコラボ/ヒーローシューター/オーダーシューター → スプラシューター、シャープマーカーネオ → シャープマーカー。
-- 「？」やランダム枠、クマサン印のランダムが見えて具体的なブキが判別できない場合は ""。
+- ビッグランの緑色の「？」やランダム枠、クマサン印を含むランダム枠は "ランダム" として返す。ビッグランではWaveごとにブキが変わるので、普通の固定4ブキとして推測しない。
+- 通常/コンテストで「？」が見えて具体的なブキが判別できない場合は ""。
 - 候補の正式名:
 ${WEAPONS.join("、")}
 
@@ -425,7 +431,7 @@ ${WEAPONS.join("、")}
 
 納品数:
 - Waveカードの大きい "40/27" は 40 が納品数、27 がノルマ。
-- STANDARD の totalEggs は WAVE 1〜3 の納品数合計。EX-WAVEは含めない。
+- STANDARD/BIG_RUN の totalEggs は WAVE 1〜3 の納品数合計。EX-WAVEは含めない。
 - CONTEST の totalEggs は WAVE 1〜5 の納品数合計。
 - 出現数 x48, x69 などは納品数ではない。totalEggs や myEggs に使わない。
 - waveEggs と counts.w1〜w5 には、各Waveの納品数だけを左から順に入れる。存在しないWaveは 0。
@@ -918,14 +924,23 @@ function jsonObjectCandidates(text) {
   return candidates;
 }
 
+function normalizeMode(value, stage = "") {
+  const mode = String(value || MODE_STANDARD).trim().toUpperCase();
+  const normalizedStage = normalizeStageName(stage);
+  if (mode === MODE_CONTEST) return MODE_CONTEST;
+  if (mode === MODE_BIG_RUN || normalizedStage === "ビッグラン") return MODE_BIG_RUN;
+  return MODE_STANDARD;
+}
+
+function randomWeaponSet() {
+  return [RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME];
+}
+
 function normalizeResult(value = {}) {
   const counts = value.counts || {};
   const rawStage = normalizeStageName(value.stage);
-  let mode = String(value.mode || "").toUpperCase() === "CONTEST" ? "CONTEST" : "STANDARD";
-  if (rawStage === "ビッグラン") {
-    mode = "STANDARD";
-  }
-  const expectedWaves = mode === "CONTEST" ? 5 : 3;
+  const mode = normalizeMode(value.mode, rawStage);
+  const expectedWaves = mode === MODE_CONTEST ? 5 : 3;
   const waveEggs = normalizeWaveEggs(value.waveEggs, counts);
   const countValues = {
     totalEggs: cleanInt(counts.totalEggs ?? value.totalEggs),
@@ -949,15 +964,22 @@ function normalizeResult(value = {}) {
     countValues.totalEggs = waveTotal;
   }
 
+  const weapons = normalizeWeapons(value.weapons, { allowRandom: mode === MODE_BIG_RUN });
+  const resolvedWeapons = mode === MODE_BIG_RUN && weapons.length < 4 ? randomWeaponSet() : weapons;
+  const resolvedWeaponSource = mode === MODE_BIG_RUN
+    && resolvedWeapons.length === 4
+    && resolvedWeapons.every((weapon) => weapon === RANDOM_WEAPON_NAME)
+    ? "random"
+    : "vlm";
   return {
     mode,
     stage: rawStage,
-    round: mode === "CONTEST" ? normalizeRound(value.round) : "",
+    round: mode === MODE_CONTEST ? normalizeRound(value.round) : "",
     stampedAt: normalizeDateTime(value.stampedAt || value.datetime || value.date_time || ""),
     dayNight: normalizeDayNight(value.dayNight),
     waveEggs,
-    weapons: normalizeWeapons(value.weapons),
-    weaponSource: "vlm",
+    weapons: resolvedWeapons,
+    weaponSource: resolvedWeaponSource,
     counts: countValues,
     warnings: rawStage === "ビッグラン"
       ? normalizeWarnings(value.warnings).filter((warning) => warning !== "開催回確認")
@@ -985,6 +1007,16 @@ async function resolveDeterministicWeapons(result, context = null) {
   const scheduled = await scheduleRotationFor(result, context?.schedulePromise);
   if (scheduled) {
     applyResolvedWeapons(result, scheduled.weapons, "schedule", scheduled.stage);
+    return;
+  }
+
+  if (
+    result.mode === MODE_BIG_RUN
+    && result.weapons?.length === 4
+    && result.weapons.every((weapon) => weapon === RANDOM_WEAPON_NAME)
+  ) {
+    result.weaponSource = "random";
+    result.warnings = normalizeWarnings(result.warnings).filter((warning) => warning !== "ブキ確認");
     return;
   }
 
@@ -1116,8 +1148,8 @@ async function scheduleRotationFor(result, schedulePromise = null) {
   return rotations.find((rotation) => (
     battleTime >= rotation.startMs
     && battleTime < rotation.endMs
-    && (!result.stage || rotation.stage === result.stage || result.stage === "ビッグラン")
-    && (!result.mode || rotation.mode === result.mode || rotation.mode === "STANDARD")
+    && (!result.stage || rotation.stage === result.stage)
+    && (!result.mode || rotation.mode === result.mode)
     && rotation.weapons.length === 4
   )) || null;
 }
@@ -1143,9 +1175,9 @@ async function fetchCoopSchedule(env = {}) {
 function coopScheduleRotations(schedule) {
   const group = schedule?.data?.coopGroupingSchedule || schedule?.coopGroupingSchedule || {};
   const sourceGroups = [
-    { mode: "STANDARD", schedules: group.regularSchedules },
-    { mode: "STANDARD", schedules: group.bigRunSchedules },
-    { mode: "CONTEST", schedules: group.teamContestSchedules },
+    { mode: MODE_STANDARD, schedules: group.regularSchedules },
+    { mode: MODE_BIG_RUN, schedules: group.bigRunSchedules },
+    { mode: MODE_CONTEST, schedules: group.teamContestSchedules },
   ];
   const rotations = [];
   for (const source of sourceGroups) {
@@ -1155,7 +1187,9 @@ function coopScheduleRotations(schedule) {
       const setting = node?.setting || {};
       const startMs = Date.parse(node.startTime || "");
       const endMs = Date.parse(node.endTime || "");
-      const stage = scheduleStageName(setting?.coopStage?.name || setting?.vsStage?.name || "");
+      const stage = source.mode === MODE_BIG_RUN
+        ? "ビッグラン"
+        : scheduleStageName(setting?.coopStage?.name || setting?.vsStage?.name || "");
       const weapons = (setting?.weapons || [])
         .map((weapon) => scheduleWeaponName(weapon?.name))
         .filter(Boolean)
@@ -1203,8 +1237,9 @@ function normalizeWeapons(weapons, options = {}) {
 
 function normalizeWeaponName(value, options = {}) {
   const text = String(value || "").normalize("NFKC").replace(/\s+/g, "").trim();
-  if (!text || text === "?") return "";
-  if (text.includes("ランダム") || /^random$/i.test(text)) return options.allowRandom ? "ランダム" : "";
+  if (!text) return "";
+  if (text === "?" || text === "？") return options.allowRandom ? RANDOM_WEAPON_NAME : "";
+  if (text.includes("ランダム") || /^random$/i.test(text)) return options.allowRandom ? RANDOM_WEAPON_NAME : "";
   const keyAlias = WEAPON_KEY_TO_JA.get(normalizeWeaponKeyToken(text));
   if (keyAlias) return keyAlias;
   const exact = WEAPONS.find((weapon) => text === weapon.replace(/\s+/g, ""));
@@ -1352,7 +1387,7 @@ function normalizeWarnings(warnings = []) {
 function qualityWarnings(result) {
   const warnings = [];
   if (!result.stage) warnings.push("ステージ確認");
-  if (result.mode === "CONTEST" && !result.round) warnings.push("開催回確認");
+  if (result.mode === MODE_CONTEST && !result.round) warnings.push("開催回確認");
   if (!result.stampedAt) warnings.push("時刻確認");
   if (!result.counts.totalEggs) warnings.push("納品数確認");
   if (!result.counts.myEggs || !result.counts.myRed) warnings.push("自分確認");

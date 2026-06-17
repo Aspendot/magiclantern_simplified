@@ -1,10 +1,10 @@
-const CACHE_NAME = "salmonmetrics-static-v45";
+const CACHE_NAME = "salmonmetrics-static-v46";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
   "/styles.css",
-  "/app.js?v=20260617d",
-  "/assets/weapons/manifest.json?v=20260617d",
+  "/app.js?v=20260617e",
+  "/assets/weapons/manifest.json?v=20260617e",
   "/assets/weapons/random.png",
   "/manifest.webmanifest",
   "/salmonmetrics-icon.svg",

@@ -182,6 +182,7 @@
               <span>記録種別</span>
               <select name="mode" id="ocrMode">
                 <option value="STANDARD">通常</option>
+                <option value="BIG_RUN">ビッグラン</option>
                 <option value="CONTEST">コンテスト</option>
               </select>
             </label>
@@ -431,6 +432,13 @@
           </div>
           <div class="panel">
             <div class="panel-head">
+              <h3>最近のビッグラン</h3>
+              <span id="bigRunCount">0</span>
+            </div>
+            <div class="record-list" id="recentBigRun"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
               <h3>コンテスト順位</h3>
               <span id="contestCount">0</span>
             </div>
@@ -530,6 +538,6 @@
       </form>
     </dialog>
 
-    <script src="/app.js?v=20260617d" type="module"></script>
+    <script src="/app.js?v=20260617e" type="module"></script>
   </body>
 </html>

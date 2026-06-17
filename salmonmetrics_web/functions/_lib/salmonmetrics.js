@@ -94,6 +94,10 @@ const WEAPON_COLUMN_APPEND_ORDER = [
 
 const DAY_ONLY = "昼のみ";
 const NIGHT_INCLUDED = "夜あり";
+const MODE_STANDARD = "STANDARD";
+const MODE_BIG_RUN = "BIG_RUN";
+const MODE_CONTEST = "CONTEST";
+const RANDOM_WEAPON_NAME = "ランダム";
 const DAY_NIGHT_NOTE_PATTERN = /^\[(?:昼のみ|夜あり)\]\s*/;
 const RECORD_META_PATTERN = /\[sm:([^\]\r\n]+)\]/g;
 const APP_TIME_ZONE = "Asia/Tokyo";
@@ -261,6 +265,21 @@ function normalizeDayNight(value) {
   return String(value || "").includes("夜") ? NIGHT_INCLUDED : DAY_ONLY;
 }
 
+function normalizeMode(value, stage = "") {
+  const mode = String(value || MODE_STANDARD).trim().toUpperCase();
+  if (mode === MODE_CONTEST) return MODE_CONTEST;
+  if (mode === MODE_BIG_RUN || String(stage || "").trim() === "ビッグラン") return MODE_BIG_RUN;
+  return MODE_STANDARD;
+}
+
+function isStandardLikeMode(mode) {
+  return normalizeMode(mode) !== MODE_CONTEST;
+}
+
+function randomWeaponSet() {
+  return [RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME];
+}
+
 function notesWithDayNight(dayNight, notes) {
   const cleanNotes = String(notes || "").replace(DAY_NIGHT_NOTE_PATTERN, "").trim();
   const condition = normalizeDayNight(dayNight);
@@ -383,7 +402,7 @@ function normalizeLegacyShiftedRow(row = {}) {
   const shifted = row[FIELD.weapons] !== undefined
     && row[FIELD.weapons] !== ""
     && Number.isFinite(asFloat(row[FIELD.weapons]))
-    && ["STANDARD", "CONTEST", "DELETED", "DELETE"].includes(dpkValue);
+    && ["STANDARD", "BIG_RUN", "CONTEST", "DELETED", "DELETE"].includes(dpkValue);
   if (!shifted) return row;
 
   return {
@@ -520,11 +539,9 @@ export function buildDeletePayload(body, record = {}) {
   return payload;
 }
 
-export function buildSheetPayload(body, config) {
-  const mode = String(body.mode || "STANDARD").toUpperCase();
-  if (!["STANDARD", "CONTEST"].includes(mode)) {
-    throw new Error("mode must be STANDARD or CONTEST");
-  }
+export function buildSheetPayload(body, config = {}) {
+  const incomingStage = String(body.stage || config.stage || "");
+  const mode = normalizeMode(body.mode, incomingStage);
 
   const user = String(body.userName || "").trim();
   if (!user || ["選択してください", "すべて"].includes(user)) {
@@ -548,12 +565,15 @@ export function buildSheetPayload(body, config) {
   const dayNight = normalizeDayNight(body.dayNight);
   const recordId = normalizeRecordId(body.recordId) || randomToken("smr");
   const clientId = normalizeClientId(body.clientId);
-  const weapons = formatWeapons(body.weapons) || formatWeapons(config.weapons);
+  const submittedWeapons = formatWeapons(body.weapons);
+  const weapons = mode === MODE_BIG_RUN
+    ? formatWeapons(randomWeaponSet())
+    : (submittedWeapons || formatWeapons(config.weapons));
 
   const payload = {
     [FIELD.datetime]: sheetDatetime(body.stampedAt),
     [FIELD.user]: user,
-    [FIELD.stage]: mode === "CONTEST" ? String(body.round || "第1回") : String(body.stage || config.stage || ""),
+    [FIELD.stage]: mode === MODE_CONTEST ? String(body.round || "第1回") : incomingStage,
     [FIELD.weapons]: weapons,
     [FIELD.totalEggs]: totalEggs,
     [FIELD.myEggs]: myEggs,
@@ -564,7 +584,7 @@ export function buildSheetPayload(body, config) {
     [FIELD.totalKills]: totalKills,
     [FIELD.totalRed]: totalRed,
     [FIELD.myRed]: myRed,
-    [FIELD.notes]: appendMetadata(mode === "STANDARD" ? notesWithDayNight(dayNight, notes) : notes, {
+    [FIELD.notes]: appendMetadata(isStandardLikeMode(mode) ? notesWithDayNight(dayNight, notes) : notes, {
       v: "1",
       id: recordId,
       cid: clientId,
@@ -580,13 +600,13 @@ export function buildSheetPayload(body, config) {
     [FIELD.clientId]: clientId,
   };
 
-  if (mode === "STANDARD" && body.playStyle) {
+  if (isStandardLikeMode(mode) && body.playStyle) {
     payload[FIELD.playStyle] = String(body.playStyle);
   }
-  if (mode === "STANDARD") {
+  if (isStandardLikeMode(mode)) {
     payload[FIELD.dayNight] = dayNight;
   }
-  if (mode === "CONTEST") {
+  if (mode === MODE_CONTEST) {
     if (body.stage) {
       payload[FIELD.contestStage] = String(body.stage);
     }
