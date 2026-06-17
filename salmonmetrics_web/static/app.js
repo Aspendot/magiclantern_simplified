@@ -150,6 +150,7 @@ const state = {
   weaponManifest: [],
   lastOcrImages: null,
   lastFeedbackSubmission: null,
+  weaponFeedbackQueue: Promise.resolve(),
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -2669,7 +2670,10 @@ function recordWeaponCorrection(result, slot, previous, corrected, correctedWeap
   } catch {
     // Best-effort capture; a storage failure must never break the correction.
   }
-  submitWeaponCorrectionFeedback(result, feedback).catch(() => {});
+  state.weaponFeedbackQueue = (state.weaponFeedbackQueue || Promise.resolve())
+    .catch(() => {})
+    .then(() => submitWeaponCorrectionFeedback(result, feedback))
+    .catch(() => {});
 }
 
 async function submitWeaponCorrectionFeedback(result, feedback) {

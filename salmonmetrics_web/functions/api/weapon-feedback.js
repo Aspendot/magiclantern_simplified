@@ -134,38 +134,133 @@ async function storeCorrectionLookup(env, record) {
   const correctedWeapons = cleanWeaponArray(record.correctedWeapons, "correctedWeapons");
   if (correctedWeapons.some((weapon) => !weapon)) return;
 
+  const writes = [];
+  if (record.images.full?.sha256) {
+    writes.push(storeMergedCorrectionLookup(env, `correction/full/${record.images.full.sha256}.json`, record, correctedWeapons));
+  }
+  if (record.images.weapons?.sha256) {
+    writes.push(storeMergedCorrectionLookup(env, `correction/weapons/${record.images.weapons.sha256}.json`, record, correctedWeapons));
+  }
+  await Promise.all(writes);
+}
+
+async function storeMergedCorrectionLookup(env, key, record, correctedWeapons) {
+  const existing = await env.WEAPON_FEEDBACK.get(key, { type: "json" }).catch(() => null);
+  const verifiedChanges = correctionSlotsForRecord(record, correctedWeapons);
+  const mergedWeapons = mergeCorrectedWeapons(existing?.correctedWeapons, correctedWeapons, verifiedChanges);
+  if (mergedWeapons.some((weapon) => !weapon)) return;
+
+  const changedSlots = mergeChangedSlots(existing?.changedSlots, verifiedChanges);
+  const verifiedSlots = mergeVerifiedSlots(existing?.verifiedSlots, changedSlots);
   const payload = JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     feedbackId: record.id,
-    createdAt: record.createdAt,
-    correctedWeapons,
-    changedSlots: record.changedSlots,
+    createdAt: latestIsoTimestamp(existing?.createdAt, record.createdAt),
+    updatedAt: record.createdAt,
+    correctedWeapons: mergedWeapons,
+    changedSlots,
+    verifiedSlots,
     source: {
       weaponSource: record.source.weaponSource,
       provider: record.source.provider,
       model: record.source.model,
     },
+    previousFeedbackId: existing?.feedbackId || "",
   });
   const metadata = {
     feedbackId: record.id,
     createdAt: record.createdAt,
     status: "verified_by_user",
+    verifiedSlots: verifiedSlots.join(","),
   };
 
-  const writes = [];
-  if (record.images.full?.sha256) {
-    writes.push(env.WEAPON_FEEDBACK.put(`correction/full/${record.images.full.sha256}.json`, payload, {
-      expirationTtl: CORRECTION_TTL_SECONDS,
-      metadata,
-    }));
+  await env.WEAPON_FEEDBACK.put(key, payload, {
+    expirationTtl: CORRECTION_TTL_SECONDS,
+    metadata,
+  });
+}
+
+function correctionSlotsForRecord(record, correctedWeapons) {
+  const bySlot = new Map();
+  for (const item of record.changedSlots || []) {
+    const slot = cleanSlot(item?.slot);
+    const corrected = cleanText(item?.corrected, 120);
+    if (slot >= 1 && slot <= 4 && corrected) {
+      bySlot.set(slot, {
+        slot,
+        previous: cleanText(item?.previous, 120),
+        corrected,
+      });
+    }
   }
-  if (record.images.weapons?.sha256) {
-    writes.push(env.WEAPON_FEEDBACK.put(`correction/weapons/${record.images.weapons.sha256}.json`, payload, {
-      expirationTtl: CORRECTION_TTL_SECONDS,
-      metadata,
-    }));
+
+  for (let index = 0; index < 4; index += 1) {
+    const slot = index + 1;
+    const corrected = cleanText(correctedWeapons[index], 120);
+    const detected = cleanText(record.detectedWeapons?.[index], 120);
+    if (corrected && corrected !== detected) {
+      bySlot.set(slot, {
+        slot,
+        previous: detected,
+        corrected,
+      });
+    }
   }
-  await Promise.all(writes);
+
+  return [...bySlot.values()].sort((left, right) => left.slot - right.slot);
+}
+
+function mergeCorrectedWeapons(existingValue, incomingValue, changedSlots) {
+  const incoming = cleanWeaponArray(incomingValue, "incoming correctedWeapons", { allowEmpty: true });
+  const existing = Array.isArray(existingValue)
+    ? cleanWeaponArray(existingValue, "existing correctedWeapons", { allowEmpty: true })
+    : [];
+  const merged = (existing.some((weapon) => weapon) ? existing : incoming).slice(0, 4);
+  while (merged.length < 4) merged.push("");
+
+  for (let index = 0; index < 4; index += 1) {
+    if (!merged[index] && incoming[index]) merged[index] = incoming[index];
+  }
+  for (const item of changedSlots || []) {
+    const index = cleanSlot(item?.slot) - 1;
+    const corrected = cleanText(item?.corrected, 120) || incoming[index] || "";
+    if (index >= 0 && index < 4 && corrected) merged[index] = corrected;
+  }
+
+  return merged;
+}
+
+function mergeChangedSlots(existingValue, incomingValue) {
+  const bySlot = new Map();
+  for (const list of [existingValue, incomingValue]) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const slot = cleanSlot(item?.slot);
+      const corrected = cleanText(item?.corrected, 120);
+      if (slot >= 1 && slot <= 4 && corrected) {
+        bySlot.set(slot, {
+          slot,
+          previous: cleanText(item?.previous, 120),
+          corrected,
+        });
+      }
+    }
+  }
+  return [...bySlot.values()].sort((left, right) => left.slot - right.slot);
+}
+
+function mergeVerifiedSlots(existingValue, changedSlots) {
+  const slots = new Set(Array.isArray(existingValue) ? existingValue.map(cleanSlot) : []);
+  for (const item of changedSlots || []) slots.add(cleanSlot(item?.slot));
+  return [...slots].filter((slot) => slot >= 1 && slot <= 4).sort((left, right) => left - right);
+}
+
+function latestIsoTimestamp(left, right) {
+  const leftText = cleanText(left, 80);
+  const rightText = cleanText(right, 80);
+  if (!leftText) return rightText;
+  if (!rightText) return leftText;
+  return leftText > rightText ? leftText : rightText;
 }
 
 function cleanChangedSlots(rawValue, detectedWeapons, correctedWeapons) {
