@@ -1009,6 +1009,71 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+.big-run-weapons {
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
+  max-width: 360px;
+  padding: 7px;
+  border: 1px solid rgba(98, 245, 223, 0.24);
+  border-radius: 8px;
+  background: rgba(98, 245, 223, 0.06);
+}
+
+.big-run-weapon-title {
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.big-run-weapon-head,
+.big-run-weapon-row {
+  display: grid;
+  grid-template-columns: 32px repeat(3, 32px);
+  gap: 5px;
+  align-items: center;
+}
+
+.big-run-weapon-head span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.big-run-weapon-row strong {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.big-run-weapon-cell,
+.big-run-weapon-empty {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+}
+
+.big-run-weapon-cell .weapon-icon-token {
+  width: 30px;
+  height: 30px;
+}
+
+.big-run-weapon-cell .weapon-icon-token img {
+  width: 26px;
+  height: 26px;
+}
+
+.big-run-weapon-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(9, 11, 16, 0.7);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
 .record-metric {
   color: var(--yellow);
   font-family: "SFMono-Regular", Consolas, monospace;

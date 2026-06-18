@@ -4,7 +4,7 @@ const STORAGE_CONFIG = "salmonmetrics.shiftConfig";
 const STORAGE_ANALYTICS_USER = "salmonmetrics.analyticsUser";
 const STORAGE_CLIENT = "salmonmetrics.clientId";
 const STORAGE_WEAPON_CORRECTIONS = "salmonmetrics.weaponCorrections";
-const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json?v=20260617e";
+const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json?v=20260618a";
 const WEAPON_FUZZY_MARGIN = 0.055;
 const WEAPON_FUZZY_MIN_SCORE = 0.82;
 const GEMINI_MODEL_LABELS = new Map([
@@ -149,6 +149,8 @@ const state = {
   loading: false,
   ocrWarnings: [],
   ocrWeapons: [],
+  ocrBigRunWeapons: { waveCount: 0, rows: [] },
+  bigRunWeaponsDraft: { waveCount: 0, rows: [] },
   weaponLookup: new Map(),
   weaponCandidates: [],
   weaponManifest: [],
@@ -503,6 +505,9 @@ async function submitEntry(event, mode) {
     localStorage.setItem(STORAGE_USER, userName);
     ensureUserOption(userName);
     resetEntryForm(form);
+    if (isBigRunMode(payload.mode)) {
+      state.bigRunWeaponsDraft = { waveCount: 0, rows: [] };
+    }
     renderPreview(form, previewTargetForMode(payload.mode));
     toast(`送信完了 · Dr ${formatPercent(submittedMetrics.dr)} · DPK ${submittedMetrics.dpk.toFixed(2)}`);
     await loadLogs();
@@ -582,6 +587,9 @@ function entryPayload(form, mode, userName) {
     payload.playStyle = form.elements.playStyle?.value || "";
     payload.stampedAt = form.elements.stampedAt?.value || "";
     payload.dayNight = form.elements.dayNight?.value || DAY_ONLY;
+    if (isBigRunMode(effectiveMode)) {
+      payload.bigRunWeapons = normalizeBigRunWeapons(state.bigRunWeaponsDraft, effectiveMode);
+    }
   } else {
     payload.round = form.elements.round.value;
     payload.stage = form.elements.stage?.value || "";
@@ -608,6 +616,9 @@ function ocrPayload(mode, userName) {
     payload.stage = stage;
     payload.playStyle = elements.ocrForm.elements.playStyle?.value || "";
     payload.dayNight = elements.ocrDayNight.value || DAY_ONLY;
+    if (isBigRunMode(effectiveMode)) {
+      payload.bigRunWeapons = normalizeBigRunWeapons(state.ocrBigRunWeapons, effectiveMode);
+    }
   } else {
     payload.stage = stage;
     payload.round = elements.ocrRound.value || "第1回";
@@ -1050,12 +1061,14 @@ function renderBigRunRecords(records) {
     const dayNight = escapeHtml(dayNightOf(log));
     const weapons = weaponsOf(log);
     const weaponLine = weapons ? `<span class="record-weapons">${weaponIconsHtml(weapons)}</span>` : "";
+    const bigRunWeapons = bigRunWeaponsHtml(bigRunWeaponsOf(log));
     return `
       <article class="record-row">
         <div>
           <strong>${date} · ${stage}</strong>
           <span>${user} · ${dayNight} · 納品 ${eggs} · Dr ${dr}</span>
           ${weaponLine}
+          ${bigRunWeapons}
         </div>
         <div class="record-actions">
           <div class="record-metric">${dpk}</div>
@@ -1182,6 +1195,53 @@ function weaponsOf(record = {}) {
   return String(record[FIELD.weapons] || record["武器"] || "")
     .trim()
     .replace(/\s*\/\s*/g, " / ");
+}
+
+function bigRunWeaponsOf(record = {}) {
+  const metadata = parseLogMetadata(record);
+  if (!metadata.brw) return { waveCount: 0, rows: [] };
+  try {
+    return normalizeBigRunWeapons(JSON.parse(metadata.brw), MODE_BIG_RUN);
+  } catch {
+    return { waveCount: 0, rows: [] };
+  }
+}
+
+function hasBigRunWeaponDetails(details = {}) {
+  return Array.isArray(details.rows) && details.rows.some((row) => row.weapons?.some(Boolean));
+}
+
+function hasCompleteBigRunWeaponDetails(details = {}) {
+  const waveCount = Math.max(1, Math.min(3, numberFrom(details.waveCount) || 3));
+  const rows = Array.isArray(details.rows) ? details.rows : [];
+  return rows.length === 4 && rows.every((row) => (
+    Array.isArray(row.weapons)
+    && row.weapons.slice(0, waveCount).every((weapon) => String(weapon || "").trim())
+  ));
+}
+
+function bigRunWeaponsHtml(details = {}) {
+  const normalized = normalizeBigRunWeapons(details, MODE_BIG_RUN);
+  if (!hasBigRunWeaponDetails(normalized)) return "";
+  const waveCount = normalized.waveCount || 3;
+  const headers = Array.from({ length: waveCount }, (_, index) => `<span>W${index + 1}</span>`).join("");
+  const rows = normalized.rows.map((row, index) => {
+    const cells = Array.from({ length: waveCount }, (_, weaponIndex) => bigRunWeaponSlotHtml(row.weapons?.[weaponIndex])).join("");
+    return `<div class="big-run-weapon-row"><strong>${escapeHtml(row.player || `${index + 1}P`)}</strong>${cells}</div>`;
+  }).join("");
+  return `
+    <div class="big-run-weapons" aria-label="ビッグラン ランダム内容">
+      <div class="big-run-weapon-title">ランダム内容</div>
+      <div class="big-run-weapon-head"><span></span>${headers}</div>
+      ${rows}
+    </div>
+  `;
+}
+
+function bigRunWeaponSlotHtml(weaponName) {
+  const name = String(weaponName || "").trim();
+  if (!name) return `<span class="big-run-weapon-empty">-</span>`;
+  return `<span class="big-run-weapon-cell">${weaponIconHtml(name)}</span>`;
 }
 
 function weaponListFromText(value) {
@@ -1629,6 +1689,7 @@ async function handleOcrUpload(event) {
   elements.ocrResult.replaceChildren();
   state.ocrWarnings = [];
   state.ocrWeapons = [];
+  state.ocrBigRunWeapons = { waveCount: 0, rows: [] };
   state.lastOcrImages = null;
   setOcrStatus("画像を解析中");
   setOcrEngine("アップロード準備中");
@@ -1661,6 +1722,8 @@ function resetOcrPanel() {
   elements.ocrClearButton.hidden = true;
   state.ocrWarnings = [];
   state.ocrWeapons = [];
+  state.ocrBigRunWeapons = { waveCount: 0, rows: [] };
+  state.bigRunWeaponsDraft = { waveCount: 0, rows: [] };
   state.lastOcrImages = null;
   clearOcrFields(elements.ocrForm, "STANDARD");
   elements.ocrMode.value = "STANDARD";
@@ -1772,6 +1835,7 @@ async function postOcrImages(images) {
         full: images.full,
         sheet: images.sheet,
         weapons: images.weapons,
+        players: images.players,
       },
     }),
   });
@@ -1992,6 +2056,7 @@ function normalizeSmartOcrResult(result, meta = {}) {
     waveEggs,
     weapons: normalizeOcrWeapons(result.weapons),
     weaponSource: String(result.weaponSource || result.weaponsSource || "").trim(),
+    bigRunWeapons: normalizeBigRunWeapons(result.bigRunWeapons, mode),
     counts: {
       totalEggs: numberFrom(counts.totalEggs ?? result.totalEggs),
       myEggs: numberFrom(counts.myEggs ?? result.myEggs),
@@ -2030,6 +2095,25 @@ function normalizeOcrWeapons(weapons = []) {
     .map((weapon) => String(weapon || "").trim())
     .filter(Boolean)
     .slice(0, 4);
+}
+
+function normalizeBigRunWeapons(value = {}, mode = MODE_STANDARD) {
+  if (!isBigRunMode(mode)) return { waveCount: 0, rows: [] };
+  const source = value && typeof value === "object" ? value : {};
+  const rows = Array.isArray(source.rows) ? source.rows : [];
+  const waveCount = Math.max(1, Math.min(3, numberFrom(source.waveCount) || 3));
+  const normalizedRows = Array.from({ length: 4 }, (_, index) => {
+    const row = rows[index] || {};
+    const weapons = Array.isArray(row?.weapons) ? row.weapons : [];
+    return {
+      player: `${index + 1}P`,
+      weapons: Array.from({ length: waveCount }, (_, weaponIndex) => String(weapons[weaponIndex] || "").trim()),
+    };
+  });
+  return {
+    waveCount,
+    rows: normalizedRows.some((row) => row.weapons.some(Boolean)) ? normalizedRows : [],
+  };
 }
 
 function shortOcrWarning(warning = "") {
@@ -2294,6 +2378,7 @@ function ocrWarningsFromNormalized(result) {
   if (!result.counts.totalEggs) warnings.push("納品数");
   if (!result.counts.myEggs || !result.counts.myRed) warnings.push("自分の数値");
   if (!Array.isArray(result.weapons) || result.weapons.length < 4) warnings.push("ブキ");
+  if (isBigRunMode(result.mode) && !hasCompleteBigRunWeaponDetails(result.bigRunWeapons)) warnings.push("ブキ");
   if ([result.counts.myKills, result.counts.p2Kills, result.counts.p3Kills, result.counts.p4Kills].some((value) => !value)) {
     warnings.push("処理数");
   }
@@ -2314,6 +2399,7 @@ function applyOcrResult(result) {
   }
   state.ocrWarnings = Array.isArray(result.warnings) ? [...result.warnings] : [];
   state.ocrWeapons = normalizeOcrWeapons(result.weapons);
+  state.ocrBigRunWeapons = normalizeBigRunWeapons(result.bigRunWeapons, mode);
 
   elements.ocrMode.value = mode;
   syncOcrModeUi();
@@ -2450,6 +2536,7 @@ function clearOcrFields(form, mode) {
   }
   if (form === elements.ocrForm) {
     state.ocrWarnings = [];
+    state.ocrBigRunWeapons = { waveCount: 0, rows: [] };
   }
   if (isStandardLikeMode(mode) && form === elements.standardForm) setStandardDayNightValue(DAY_ONLY);
   $$("input, select, textarea", form).forEach((field) => field.classList.remove("needs-check"));
@@ -2534,6 +2621,9 @@ function copyOcrToEntryForm() {
 
   if (isStandardLikeMode(mode)) {
     const selectedStage = elements.ocrStageSelect.value || (isBigRunMode(mode) ? "ビッグラン" : "");
+    state.bigRunWeaponsDraft = isBigRunMode(mode)
+      ? normalizeBigRunWeapons(state.ocrBigRunWeapons, mode)
+      : { waveCount: 0, rows: [] };
     state.config = normalizeConfig({
       ...state.config,
       stage: selectedStage,
@@ -2579,7 +2669,7 @@ function renderOcrResult(result) {
     chips.splice(1, 0, ocrChip("経路", attemptPath));
   }
   state.lastOcrResult = result;
-  elements.ocrResult.innerHTML = ocrWeaponRowHtml(result) + chips.join("");
+  elements.ocrResult.innerHTML = ocrWeaponRowHtml(result) + bigRunWeaponsHtml(result.bigRunWeapons) + chips.join("");
   elements.ocrResult.hidden = false;
   ensureOcrWeaponEditing();
 }

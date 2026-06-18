@@ -280,6 +280,21 @@ function randomWeaponSet() {
   return [RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME];
 }
 
+function normalizeBigRunWeapons(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  const waveCount = Math.max(1, Math.min(3, asFloat(source.waveCount) || 3));
+  const rows = Array.isArray(source.rows) ? source.rows : [];
+  const normalizedRows = Array.from({ length: 4 }, (_, index) => {
+    const row = rows[index] || {};
+    const weapons = Array.isArray(row?.weapons) ? row.weapons : [];
+    return {
+      player: `${index + 1}P`,
+      weapons: Array.from({ length: waveCount }, (_, weaponIndex) => String(weapons[weaponIndex] || "").trim()),
+    };
+  });
+  return normalizedRows.some((row) => row.weapons.some(Boolean)) ? { waveCount, rows: normalizedRows } : null;
+}
+
 function notesWithDayNight(dayNight, notes) {
   const cleanNotes = String(notes || "").replace(DAY_NIGHT_NOTE_PATTERN, "").trim();
   const condition = normalizeDayNight(dayNight);
@@ -569,6 +584,17 @@ export function buildSheetPayload(body, config = {}) {
   const weapons = mode === MODE_BIG_RUN
     ? formatWeapons(randomWeaponSet())
     : (submittedWeapons || formatWeapons(config.weapons));
+  const metadata = {
+    v: "1",
+    id: recordId,
+    cid: clientId,
+  };
+  if (mode === MODE_BIG_RUN) {
+    const bigRunWeapons = normalizeBigRunWeapons(body.bigRunWeapons);
+    if (bigRunWeapons) {
+      metadata.brw = JSON.stringify(bigRunWeapons);
+    }
+  }
 
   const payload = {
     [FIELD.datetime]: sheetDatetime(body.stampedAt),
@@ -584,11 +610,7 @@ export function buildSheetPayload(body, config = {}) {
     [FIELD.totalKills]: totalKills,
     [FIELD.totalRed]: totalRed,
     [FIELD.myRed]: myRed,
-    [FIELD.notes]: appendMetadata(isStandardLikeMode(mode) ? notesWithDayNight(dayNight, notes) : notes, {
-      v: "1",
-      id: recordId,
-      cid: clientId,
-    }),
+    [FIELD.notes]: appendMetadata(isStandardLikeMode(mode) ? notesWithDayNight(dayNight, notes) : notes, metadata),
     Dr: dr,
     BSKr: bskr,
     OKr: okr,

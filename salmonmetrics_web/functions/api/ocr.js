@@ -317,6 +317,27 @@ const RESULT_SCHEMA = {
       type: "array",
       items: { type: "string", enum: [...WEAPONS, RANDOM_WEAPON_NAME, ""] },
     },
+    bigRunWeapons: {
+      type: "object",
+      properties: {
+        waveCount: { type: "integer" },
+        rows: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              player: { type: "string" },
+              weapons: {
+                type: "array",
+                items: { type: "string", enum: [...WEAPONS, ""] },
+              },
+            },
+            required: ["player", "weapons"],
+          },
+        },
+      },
+      required: ["waveCount", "rows"],
+    },
     counts: {
       type: "object",
       properties: {
@@ -355,7 +376,7 @@ const RESULT_SCHEMA = {
       items: { type: "string" },
     },
   },
-  required: ["mode", "stage", "round", "stampedAt", "dayNight", "waveEggs", "weapons", "counts", "warnings"],
+  required: ["mode", "stage", "round", "stampedAt", "dayNight", "waveEggs", "weapons", "bigRunWeapons", "counts", "warnings"],
 };
 
 const VLM_PROMPT = `
@@ -376,6 +397,15 @@ warnings はできるだけ次の短いラベルだけを使ってください:
   "dayNight": "昼のみ" | "夜あり",
   "waveEggs": [number],
   "weapons": ["ブキ1", "ブキ2", "ブキ3", "ブキ4"],
+  "bigRunWeapons": {
+    "waveCount": number,
+    "rows": [
+      { "player": "1P", "weapons": ["W1のブキ", "W2のブキ", "W3のブキ"] },
+      { "player": "2P", "weapons": ["W1のブキ", "W2のブキ", "W3のブキ"] },
+      { "player": "3P", "weapons": ["W1のブキ", "W2のブキ", "W3のブキ"] },
+      { "player": "4P", "weapons": ["W1のブキ", "W2のブキ", "W3のブキ"] }
+    ]
+  },
   "counts": {
     "totalEggs": number,
     "myEggs": number,
@@ -448,6 +478,14 @@ ${WEAPONS.join("、")}
 - myRed は1行目右側カプセル内の赤イクラ xN。
 - 右側の小さいボスアイコン横の x0/x2/x5 などを処理数として使わない。
 - プレイヤー名は登録に使わない。
+- ビッグランのランダム内容:
+  - ビッグランでは上部の「????」はシフト全体がランダムという意味。weapons は ["ランダム","ランダム","ランダム","ランダム"] にする。
+  - 実際に出たランダムブキの内容は、下部プレイヤー行の「名前の右側」にある丸いブキアイコンから読む。
+  - bigRunWeapons.waveCount は 3。bigRunWeapons.rows は上から順に 1P/2P/3P/4P の4行。
+  - 各 row.weapons は左から WAVE 1, WAVE 2, WAVE 3 のメインブキ。クマサン印ブキも正式名で入れる。
+  - 紫/青のスペシャルアイコン、右側カプセル内のオオモノ/赤イクラ/金イクラの小アイコン、Wave下のスペシャル残数アイコンは入れない。
+  - 1つでも読めないアイコンはその位置だけ ""。行やWaveの位置は詰めずに保つ。
+  - 通常/コンテストでは bigRunWeapons は { "waveCount": 0, "rows": [] }。
 
 よくある誤読の修正:
 - ムニ・エール海洋発電所をどんぴこ闘技場にしない。右上ステージラベルを見る。
@@ -652,6 +690,10 @@ async function callGemini({ apiKey, model, images, weaponHints, attempt, errors 
   if (images.weapons) {
     parts.push({ text: "次の画像は支給ブキ4つだけを拡大・高解像度化した切り抜きです。weapons はこの画像を最優先で、左から順に4つのメインブキ名を候補リストから読み取ってください。" });
     parts.push(imagePart(images.weapons));
+  }
+  if (images.players) {
+    parts.push({ text: "次の画像はプレイヤー行だけを拡大した切り抜きです。ビッグランの bigRunWeapons は、この画像の各プレイヤー名の右側にあるメインブキアイコンを左から WAVE 1, WAVE 2, WAVE 3 として読んでください。紫/青のスペシャルアイコンと右側カプセル内の小アイコンは除外してください。" });
+    parts.push(imagePart(images.players));
   }
 
   const response = await fetch(endpoint, {
@@ -936,6 +978,36 @@ function randomWeaponSet() {
   return [RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME, RANDOM_WEAPON_NAME];
 }
 
+function normalizeBigRunWeapons(value = {}, mode = MODE_STANDARD) {
+  if (mode !== MODE_BIG_RUN) return { waveCount: 0, rows: [] };
+  const source = value && typeof value === "object" ? value : {};
+  const waveCount = Math.max(1, Math.min(3, cleanInt(source.waveCount) || 3));
+  const rows = Array.isArray(source.rows) ? source.rows : [];
+  const normalizedRows = Array.from({ length: 4 }, (_, index) => {
+    const row = rows[index] || {};
+    const weapons = Array.isArray(row?.weapons) ? row.weapons : [];
+    return {
+      player: `${index + 1}P`,
+      weapons: Array.from({ length: waveCount }, (_, weaponIndex) => (
+        normalizeWeaponName(weapons[weaponIndex], { allowRandom: false })
+      )),
+    };
+  });
+  return {
+    waveCount,
+    rows: normalizedRows.some((row) => row.weapons.some(Boolean)) ? normalizedRows : [],
+  };
+}
+
+function hasCompleteBigRunWeapons(details = {}) {
+  const waveCount = Math.max(1, Math.min(3, cleanInt(details.waveCount) || 3));
+  const rows = Array.isArray(details.rows) ? details.rows : [];
+  return rows.length === 4 && rows.every((row) => (
+    Array.isArray(row.weapons)
+    && row.weapons.slice(0, waveCount).every((weapon) => String(weapon || "").trim())
+  ));
+}
+
 function normalizeResult(value = {}) {
   const counts = value.counts || {};
   const rawStage = normalizeStageName(value.stage);
@@ -980,6 +1052,7 @@ function normalizeResult(value = {}) {
     waveEggs,
     weapons: resolvedWeapons,
     weaponSource: resolvedWeaponSource,
+    bigRunWeapons: normalizeBigRunWeapons(value.bigRunWeapons, mode),
     counts: countValues,
     warnings: rawStage === "ビッグラン"
       ? normalizeWarnings(value.warnings).filter((warning) => warning !== "開催回確認")
@@ -1396,6 +1469,7 @@ function qualityWarnings(result) {
     warnings.push("処理数確認");
   }
   if (!Array.isArray(result.weapons) || result.weapons.length < 4 || result.weaponSource === "vlm") warnings.push("ブキ確認");
+  if (result.mode === MODE_BIG_RUN && !hasCompleteBigRunWeapons(result.bigRunWeapons)) warnings.push("ブキ確認");
   return warnings;
 }
 
@@ -1442,6 +1516,7 @@ function normalizeImageSet(body = {}) {
     full: normalizeImagePayload(incoming.full || body.image),
     sheet: normalizeImagePayload(incoming.sheet),
     weapons: normalizeImagePayload(incoming.weapons),
+    players: normalizeImagePayload(incoming.players),
   };
 }
 
