@@ -4,7 +4,7 @@ const STORAGE_CONFIG = "salmonmetrics.shiftConfig";
 const STORAGE_ANALYTICS_USER = "salmonmetrics.analyticsUser";
 const STORAGE_CLIENT = "salmonmetrics.clientId";
 const STORAGE_WEAPON_CORRECTIONS = "salmonmetrics.weaponCorrections";
-const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json?v=20260618a";
+const WEAPON_MANIFEST_URL = "/assets/weapons/manifest.json?v=20260618b";
 const WEAPON_FUZZY_MARGIN = 0.055;
 const WEAPON_FUZZY_MIN_SCORE = 0.82;
 const GEMINI_MODEL_LABELS = new Map([
@@ -1220,13 +1220,16 @@ function hasCompleteBigRunWeaponDetails(details = {}) {
   ));
 }
 
-function bigRunWeaponsHtml(details = {}) {
+function bigRunWeaponsHtml(details = {}, options = {}) {
   const normalized = normalizeBigRunWeapons(details, MODE_BIG_RUN);
   if (!hasBigRunWeaponDetails(normalized)) return "";
+  const editable = Boolean(options.editable);
   const waveCount = normalized.waveCount || 3;
   const headers = Array.from({ length: waveCount }, (_, index) => `<span>W${index + 1}</span>`).join("");
   const rows = normalized.rows.map((row, index) => {
-    const cells = Array.from({ length: waveCount }, (_, weaponIndex) => bigRunWeaponSlotHtml(row.weapons?.[weaponIndex])).join("");
+    const cells = Array.from({ length: waveCount }, (_, weaponIndex) => (
+      bigRunWeaponSlotHtml(row.weapons?.[weaponIndex], index, weaponIndex, editable)
+    )).join("");
     return `<div class="big-run-weapon-row"><strong>${escapeHtml(row.player || `${index + 1}P`)}</strong>${cells}</div>`;
   }).join("");
   return `
@@ -1238,10 +1241,16 @@ function bigRunWeaponsHtml(details = {}) {
   `;
 }
 
-function bigRunWeaponSlotHtml(weaponName) {
+function bigRunWeaponSlotHtml(weaponName, rowIndex, waveIndex, editable = false) {
   const name = String(weaponName || "").trim();
-  if (!name) return `<span class="big-run-weapon-empty">-</span>`;
-  return `<span class="big-run-weapon-cell">${weaponIconHtml(name)}</span>`;
+  const content = name ? weaponIconHtml(name) : `<span class="big-run-weapon-empty">-</span>`;
+  if (!editable) return `<span class="big-run-weapon-cell">${content}</span>`;
+  const label = name || "未選択";
+  return `
+    <button type="button" class="big-run-weapon-cell big-run-weapon-button" data-big-run-row="${rowIndex}" data-big-run-wave="${waveIndex}" title="W${waveIndex + 1} ${escapeHtml(label)}・タップで修正">
+      ${content}
+    </button>
+  `;
 }
 
 function weaponListFromText(value) {
@@ -2669,7 +2678,7 @@ function renderOcrResult(result) {
     chips.splice(1, 0, ocrChip("経路", attemptPath));
   }
   state.lastOcrResult = result;
-  elements.ocrResult.innerHTML = ocrWeaponRowHtml(result) + bigRunWeaponsHtml(result.bigRunWeapons) + chips.join("");
+  elements.ocrResult.innerHTML = ocrWeaponRowHtml(result) + bigRunWeaponsHtml(result.bigRunWeapons, { editable: true }) + chips.join("");
   elements.ocrResult.hidden = false;
   ensureOcrWeaponEditing();
 }
@@ -2739,6 +2748,11 @@ function ensureOcrWeaponEditing() {
   if (elements.ocrResult.dataset.weaponEditBound === "1") return;
   elements.ocrResult.dataset.weaponEditBound = "1";
   elements.ocrResult.addEventListener("click", (event) => {
+    const bigRunCell = event.target.closest("[data-big-run-row][data-big-run-wave]");
+    if (bigRunCell) {
+      openBigRunWeaponPicker(Number(bigRunCell.dataset.bigRunRow), Number(bigRunCell.dataset.bigRunWave));
+      return;
+    }
     const slot = event.target.closest("[data-weapon-slot]");
     if (!slot) return;
     openWeaponPicker(Number(slot.dataset.weaponSlot));
@@ -2764,7 +2778,11 @@ function buildWeaponPickerDialog() {
   dialog.querySelector(".weapon-picker-grid").addEventListener("click", (event) => {
     const button = event.target.closest("[data-weapon-name]");
     if (!button) return;
-    applyWeaponCorrection(Number(dialog.dataset.slot), button.dataset.weaponName);
+    if (dialog.dataset.mode === "big-run") {
+      applyBigRunWeaponCorrection(Number(dialog.dataset.row), Number(dialog.dataset.wave), button.dataset.weaponName);
+    } else {
+      applyWeaponCorrection(Number(dialog.dataset.slot), button.dataset.weaponName);
+    }
     closeDialogElement(dialog);
   });
   dialog.querySelector(".weapon-picker-close").addEventListener("click", () => closeDialogElement(dialog));
@@ -2782,7 +2800,25 @@ function buildWeaponPickerDialog() {
 function openWeaponPicker(slot) {
   if (!Number.isInteger(slot)) return;
   const dialog = buildWeaponPickerDialog();
+  dialog.dataset.mode = "shift";
   dialog.dataset.slot = String(slot);
+  delete dialog.dataset.row;
+  delete dialog.dataset.wave;
+  const search = dialog.querySelector(".weapon-picker-search");
+  search.value = "";
+  filterWeaponPicker(dialog, "");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+  search.focus();
+}
+
+function openBigRunWeaponPicker(row, wave) {
+  if (!Number.isInteger(row) || !Number.isInteger(wave)) return;
+  const dialog = buildWeaponPickerDialog();
+  dialog.dataset.mode = "big-run";
+  dialog.dataset.row = String(row);
+  dialog.dataset.wave = String(wave);
+  delete dialog.dataset.slot;
   const search = dialog.querySelector(".weapon-picker-search");
   search.value = "";
   filterWeaponPicker(dialog, "");
@@ -2839,6 +2875,31 @@ function applyWeaponCorrection(slot, weaponName) {
   applyOcrResult(result);
   renderOcrResult(result);
   toast("ブキを修正しました");
+}
+
+function applyBigRunWeaponCorrection(rowIndex, waveIndex, weaponName) {
+  const result = state.lastOcrResult;
+  if (!result || !isBigRunMode(result.mode) || !Number.isInteger(rowIndex) || !Number.isInteger(waveIndex) || !weaponName) return;
+  const details = normalizeBigRunWeapons(result.bigRunWeapons, result.mode);
+  const waveCount = details.waveCount || 3;
+  if (rowIndex < 0 || rowIndex >= 4 || waveIndex < 0 || waveIndex >= waveCount) return;
+  const rows = Array.from({ length: 4 }, (_, index) => {
+    const row = details.rows?.[index] || { player: `${index + 1}P`, weapons: [] };
+    return {
+      player: `${index + 1}P`,
+      weapons: Array.from({ length: waveCount }, (_, weaponSlot) => String(row.weapons?.[weaponSlot] || "").trim()),
+    };
+  });
+  rows[rowIndex].weapons[waveIndex] = weaponName;
+  result.bigRunWeapons = { waveCount, rows };
+  state.ocrBigRunWeapons = normalizeBigRunWeapons(result.bigRunWeapons, result.mode);
+  result.warnings = ocrWarningsFromNormalized({
+    ...result,
+    bigRunWeapons: state.ocrBigRunWeapons,
+    warnings: normalizeOcrWarnings((result.warnings || []).filter((warning) => warning !== "ブキ")),
+  });
+  renderOcrResult(result);
+  toast("ビッグランのランダム内容を修正しました");
 }
 
 function recordWeaponCorrection(result, slot, previous, corrected, correctedWeapons = [], detectedWeapons = []) {

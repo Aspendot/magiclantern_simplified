@@ -1055,6 +1055,25 @@ textarea::placeholder {
   place-items: center;
 }
 
+.big-run-weapon-button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.big-run-weapon-button:hover,
+.big-run-weapon-button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.big-run-weapon-button:active {
+  transform: scale(0.94);
+}
+
 .big-run-weapon-cell .weapon-icon-token {
   width: 30px;
   height: 30px;
